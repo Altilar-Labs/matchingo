@@ -40,7 +40,7 @@ matchingo/
 
 ### Prerequisites
 
-- Go 1.20 or higher
+- Go 1.22 or higher
 - For Redis backend: Redis server
 
 ### Building
@@ -100,6 +100,55 @@ To run only Redis backend benchmarks (requires Redis running):
 ```bash
 make bench-redis
 ```
+
+## Performance Benchmarks
+
+Matchingo's performance has been optimized for both memory and Redis backends. Below are sample benchmark results showing operations per second, memory allocations, and operation latency.
+
+### Memory Backend Performance
+
+The in-memory backend provides extremely low latency and high throughput, making it suitable for high-performance single-instance deployments.
+
+```
+BenchmarkMemoryBackend_StoreOrder-16             5012650               274.1 ns/op           257 B/op          3 allocs/op
+BenchmarkMemoryBackend_GetOrder-16              100000000               10.16 ns/op            0 B/op          0 allocs/op
+BenchmarkMemoryBackend_AppendToSide-16           2776716               469.4 ns/op           329 B/op          4 allocs/op
+BenchmarkMemoryBackend_RemoveFromSide-16        12953812                91.66 ns/op            8 B/op          1 allocs/op
+BenchmarkOrderBook_Process_Memory-16             2669590               488.8 ns/op           460 B/op          5 allocs/op
+BenchmarkOrderBook_LargeOrderBook_Memory-16      3957139               355.1 ns/op           400 B/op          4 allocs/op
+```
+
+Key performance highlights:
+- Order storage: ~5M ops/sec (~274 ns/op)
+- Order retrieval: ~100M ops/sec (~10 ns/op)
+- Order processing: ~2.7M ops/sec (~489 ns/op)
+
+### Redis Backend Performance
+
+The Redis backend sacrifices some raw performance for distributed capabilities, making it suitable for scalable multi-instance deployments.
+
+```
+BenchmarkRedisBackend_StoreOrder-16                 4154            285153 ns/op            1274 B/op         25 allocs/op
+BenchmarkRedisBackend_GetOrder-16                   8118            147060 ns/op            1377 B/op         25 allocs/op
+BenchmarkRedisBackend_AppendToSide-16               1821            580180 ns/op            1876 B/op         46 allocs/op
+BenchmarkOrderBook_Process_Redis-16                 1641            718553 ns/op            2252 B/op         56 allocs/op
+BenchmarkOrderBook_SmallOrderBook_Redis-16          2077            567536 ns/op            2472 B/op         46 allocs/op
+```
+
+Key performance highlights:
+- Order storage: ~4K ops/sec (~285 μs/op)
+- Order retrieval: ~8K ops/sec (~147 μs/op)
+- Order processing: ~1.6K ops/sec (~719 μs/op)
+
+### Performance Comparison
+
+|  Operation  | Memory Backend | Redis Backend | Difference |
+|-------------|---------------|---------------|------------|
+| Store Order | 274 ns        | 285 μs        | ~1000x     |
+| Get Order   | 10 ns         | 147 μs        | ~14700x    |
+| Process Order | 489 ns      | 719 μs        | ~1470x     |
+
+The memory backend is significantly faster (up to 14,700x for certain operations), but the Redis backend offers distributed capabilities that may be necessary for certain applications.
 
 ## Usage
 
