@@ -63,11 +63,71 @@ func (ob *OrderBook) Process(order *Order) (done *Done, err error) {
 // CalculateMarketPrice returns total market Price for requested quantity
 func (ob *OrderBook) CalculateMarketPrice(side Side, quantity fpdecimal.Decimal) (price fpdecimal.Decimal, err error) {
 	price = fpdecimal.Zero
+	remaining := quantity
 
-	// This is a placeholder for the actual implementation
-	// In a real implementation, you would need to adapt to the specific backend implementation
-	// Since we're restructuring the code, we'll leave this as a stub
-	return price, ErrInsufficientQuantity
+	// For buy orders, check sell side (asks)
+	// For sell orders, check buy side (bids)
+	if side == Buy {
+		asks := ob.backend.GetAsks()
+		if askSide, isOrderSide := asks.(interface {
+			Prices() []fpdecimal.Decimal
+			Orders(price fpdecimal.Decimal) []*Order
+		}); isOrderSide {
+			prices := askSide.Prices()
+			for _, p := range prices {
+				orders := askSide.Orders(p)
+				for _, order := range orders {
+					orderQty := order.Quantity()
+					if remaining.LessThanOrEqual(orderQty) {
+						// This order can fill the entire remaining quantity
+						price = price.Add(p.Mul(remaining))
+						remaining = fpdecimal.Zero
+						break
+					} else {
+						// This order can only partially fill the remaining quantity
+						price = price.Add(p.Mul(orderQty))
+						remaining = remaining.Sub(orderQty)
+					}
+				}
+				if remaining.Equal(fpdecimal.Zero) {
+					break
+				}
+			}
+		}
+	} else {
+		bids := ob.backend.GetBids()
+		if bidSide, isOrderSide := bids.(interface {
+			Prices() []fpdecimal.Decimal
+			Orders(price fpdecimal.Decimal) []*Order
+		}); isOrderSide {
+			prices := bidSide.Prices()
+			for _, p := range prices {
+				orders := bidSide.Orders(p)
+				for _, order := range orders {
+					orderQty := order.Quantity()
+					if remaining.LessThanOrEqual(orderQty) {
+						// This order can fill the entire remaining quantity
+						price = price.Add(p.Mul(remaining))
+						remaining = fpdecimal.Zero
+						break
+					} else {
+						// This order can only partially fill the remaining quantity
+						price = price.Add(p.Mul(orderQty))
+						remaining = remaining.Sub(orderQty)
+					}
+				}
+				if remaining.Equal(fpdecimal.Zero) {
+					break
+				}
+			}
+		}
+	}
+
+	if !remaining.Equal(fpdecimal.Zero) {
+		return fpdecimal.Zero, ErrInsufficientQuantity
+	}
+
+	return price, nil
 }
 
 // private methods
@@ -99,19 +159,66 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 
 	done = newDone(marketOrder)
 
-	// This is a simplified implementation
-	// In a real implementation, you would need to adapt to the specific backend implementation
-	// and process orders on the opposite side of the book
+	// Set market order as taker
+	marketOrder.SetTaker()
 
-	// For demo purposes, we'll just set the order as fully processed
-	marketOrder.SetQuantity(fpdecimal.Zero)
-	err = ob.backend.UpdateOrder(marketOrder)
-	if err != nil {
-		return nil, err
+	// Get the remaining quantity to process
+	remainingQty := quantity
+
+	// Process against the opposite side of the book
+	oppositeOrders := ob.getOppositeOrders(marketOrder.Side())
+	if ordersInterface, isOrderSideInterface := oppositeOrders.(interface {
+		Prices() []fpdecimal.Decimal
+		Orders(price fpdecimal.Decimal) []*Order
+	}); isOrderSideInterface {
+		prices := ordersInterface.Prices()
+
+		// Iterate through price levels
+		for _, price := range prices {
+			if remainingQty.Equal(fpdecimal.Zero) {
+				break
+			}
+
+			// Get all orders at this price level
+			orders := ordersInterface.Orders(price)
+
+			// Process each order at this price level
+			for _, order := range orders {
+				if remainingQty.Equal(fpdecimal.Zero) {
+					break
+				}
+
+				// Determine the execution quantity
+				executionQty := min(remainingQty, order.Quantity())
+
+				// Execute the trade
+				remainingQty = remainingQty.Sub(executionQty)
+
+				// Update the matched order's quantity
+				order.DecreaseQuantity(executionQty)
+
+				// Record the trade in the done object
+				done.appendOrder(order, executionQty, price)
+
+				// Update the order in the backend
+				err = ob.backend.UpdateOrder(order)
+				if err != nil {
+					return nil, err
+				}
+
+				// If order is fully executed, remove it from the book
+				if order.Quantity().Equal(fpdecimal.Zero) {
+					ob.deleteOrder(order)
+				}
+			}
+		}
 	}
 
-	zeroQuantity := fpdecimal.Zero
-	done.setLeftQuantity(&zeroQuantity)
+	// Update the processed and left quantities in the done object
+	done.setLeftQuantity(&remainingQty)
+
+	// Delete the market order
+	ob.backend.DeleteOrder(marketOrder.ID())
 
 	return done, nil
 }
@@ -138,21 +245,88 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (done *Done, err error
 		return done, nil
 	}
 
-	// This is a simplified implementation
-	// In a real implementation, you would need to adapt to the specific backend implementation
-	// and match orders on the opposite side of the book
+	// Set limit order as taker initially
+	limitOrder.SetTaker()
 
-	// Add the order to the appropriate side
-	if limitOrder.Side() == Buy {
-		limitOrder.SetMaker()
-		ob.backend.AppendToSide(Buy, limitOrder)
-	} else {
-		limitOrder.SetMaker()
-		ob.backend.AppendToSide(Sell, limitOrder)
+	// Get remaining quantity to process
+	remainingQty := quantity
+	orderPrice := limitOrder.Price()
+	orderSide := limitOrder.Side()
+
+	// Get the opposite side of the book
+	oppositeOrders := ob.getOppositeOrders(orderSide)
+	if ordersInterface, isOrderSideInterface := oppositeOrders.(interface {
+		Prices() []fpdecimal.Decimal
+		Orders(price fpdecimal.Decimal) []*Order
+	}); isOrderSideInterface {
+		prices := ordersInterface.Prices()
+
+		// Iterate through price levels
+		for _, price := range prices {
+			// Check if price conditions are met for matching
+			if !isPriceMatching(orderSide, orderPrice, price) {
+				break
+			}
+
+			if remainingQty.Equal(fpdecimal.Zero) {
+				break
+			}
+
+			// Get all orders at this price level
+			orders := ordersInterface.Orders(price)
+
+			// Process each order at this price level
+			for _, order := range orders {
+				if remainingQty.Equal(fpdecimal.Zero) {
+					break
+				}
+
+				// Determine the execution quantity
+				executionQty := min(remainingQty, order.Quantity())
+
+				// Execute the trade
+				remainingQty = remainingQty.Sub(executionQty)
+
+				// Update the matched order's quantity
+				order.DecreaseQuantity(executionQty)
+
+				// Record the trade in the done object
+				done.appendOrder(order, executionQty, price)
+
+				// Update the order in the backend
+				err = ob.backend.UpdateOrder(order)
+				if err != nil {
+					return nil, err
+				}
+
+				// If order is fully executed, remove it from the book
+				if order.Quantity().Equal(fpdecimal.Zero) {
+					ob.deleteOrder(order)
+				}
+			}
+		}
 	}
 
-	done.setLeftQuantity(&quantity)
-	done.Stored = true
+	// If there's remaining quantity, add the order to the book
+	if !remainingQty.Equal(fpdecimal.Zero) {
+		// Update order quantity to the remaining amount
+		limitOrder.SetQuantity(remainingQty)
+
+		// Set as maker since it's going in the book
+		limitOrder.SetMaker()
+
+		// Add to the appropriate side of the book
+		ob.backend.AppendToSide(orderSide, limitOrder)
+
+		// Mark as stored in the done object
+		done.Stored = true
+	} else {
+		// Fully executed, remove from the system
+		ob.backend.DeleteOrder(limitOrder.ID())
+	}
+
+	// Update the processed and left quantities in the done object
+	done.setLeftQuantity(&remainingQty)
 
 	return done, nil
 }
@@ -226,4 +400,40 @@ func (ob *OrderBook) String() string {
 	builder.WriteString("\n")
 
 	return builder.String()
+}
+
+// Helper functions for the matching engine
+
+// getOppositeOrders returns the orders from the opposite side of the book
+func (ob *OrderBook) getOppositeOrders(side Side) interface{} {
+	if side == Buy {
+		return ob.backend.GetAsks() // For buy orders, get sell orders
+	}
+	return ob.backend.GetBids() // For sell orders, get buy orders
+}
+
+// oppositeOrder returns the opposite side
+func oppositeOrder(side Side) Side {
+	if side == Buy {
+		return Sell
+	}
+	return Buy
+}
+
+// min returns the minimum of two decimals
+func min(a, b fpdecimal.Decimal) fpdecimal.Decimal {
+	if a.LessThan(b) {
+		return a
+	}
+	return b
+}
+
+// isPriceMatching checks if the order price matches with the book price
+func isPriceMatching(side Side, orderPrice, bookPrice fpdecimal.Decimal) bool {
+	if side == Buy {
+		// For buy orders, the order price must be >= the book price (sell price)
+		return orderPrice.GreaterThanOrEqual(bookPrice)
+	}
+	// For sell orders, the order price must be <= the book price (buy price)
+	return orderPrice.LessThanOrEqual(bookPrice)
 }
