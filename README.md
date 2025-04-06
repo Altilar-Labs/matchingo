@@ -242,3 +242,33 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 * Original concept inspired by [gonevo/matchingo](https://github.com/gonevo/matchingo)
 * Refactored and enhanced by [erain9](https://github.com/erain9)
+
+## Matching Engine
+
+The `matchingo` library includes a high-performance matching engine that follows price-time priority rules for matching orders. The matching engine supports:
+
+- Market orders: Execute immediately at the best available price
+- Limit orders: Execute at a specified price or better
+- Stop orders: Become active when a specified price is reached
+
+### Key Features of the Matching Engine
+
+- **Price-Time Priority**: Orders are matched based on price first, then time of arrival
+- **Efficient Matching Algorithm**: O(1) lookup for price levels, O(n) for order processing within a price level
+- **Partial Fills**: Orders can be partially filled, with the remaining quantity staying in the book
+- **Trade Recording**: All trades are recorded in the `Done` object returned from order processing
+
+### Example Usage
+
+To see the matching engine in action, run the enhanced example:
+
+```bash
+go run ./cmd/examples/matching/enhanced_example/main.go
+```
+
+This example demonstrates:
+- Adding orders to the book
+- Matching orders at the same price level
+- Matching orders across multiple price levels
+- Market order execution
+- Partial fills and order book updates

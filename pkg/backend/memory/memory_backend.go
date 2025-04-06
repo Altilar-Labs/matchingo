@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nikolaydubina/fpdecimal"
 	"github.com/erain9/matchingo/pkg/core"
+	"github.com/nikolaydubina/fpdecimal"
 )
 
 // OrderQueue represents a price level in the order book
@@ -47,6 +47,35 @@ func (os *OrderSide) String() string {
 	}
 
 	return sb.String()
+}
+
+// Prices returns all prices in the order side
+func (os *OrderSide) Prices() []fpdecimal.Decimal {
+	prices := make([]fpdecimal.Decimal, 0)
+	current := os.head
+
+	for current != nil {
+		prices = append(prices, current.priceDecm)
+		current = current.next
+	}
+
+	return prices
+}
+
+// Orders returns all orders at a given price level
+func (os *OrderSide) Orders(price fpdecimal.Decimal) []*core.Order {
+	priceStr := price.String()
+	queue, exists := os.orderID[priceStr]
+	if !exists {
+		return []*core.Order{}
+	}
+
+	orders := make([]*core.Order, 0, len(queue.orders))
+	for _, order := range queue.orders {
+		orders = append(orders, order)
+	}
+
+	return orders
 }
 
 // StopBook stores stop orders
