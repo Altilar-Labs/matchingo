@@ -110,45 +110,53 @@ Matchingo's performance has been optimized for both memory and Redis backends. B
 The in-memory backend provides extremely low latency and high throughput, making it suitable for high-performance single-instance deployments.
 
 ```
-BenchmarkMemoryBackend_StoreOrder-16             5012650               274.1 ns/op           257 B/op          3 allocs/op
-BenchmarkMemoryBackend_GetOrder-16              100000000               10.16 ns/op            0 B/op          0 allocs/op
-BenchmarkMemoryBackend_AppendToSide-16           2776716               469.4 ns/op           329 B/op          4 allocs/op
-BenchmarkMemoryBackend_RemoveFromSide-16        12953812                91.66 ns/op            8 B/op          1 allocs/op
-BenchmarkOrderBook_Process_Memory-16             2669590               488.8 ns/op           460 B/op          5 allocs/op
-BenchmarkOrderBook_LargeOrderBook_Memory-16      3957139               355.1 ns/op           400 B/op          4 allocs/op
+BenchmarkMemoryBackend_StoreOrder-16            10284558               291.7 ns/op           254 B/op          3 allocs/op
+BenchmarkMemoryBackend_GetOrder-16              237962809               10.00 ns/op            0 B/op          0 allocs/op
+BenchmarkMemoryBackend_AppendToSide-16           5421882               507.1 ns/op           325 B/op          4 allocs/op
+BenchmarkMemoryBackend_RemoveFromSide-16        25432212                93.15 ns/op            8 B/op          1 allocs/op
+BenchmarkOrderBook_Process_Memory-16             4345374               541.8 ns/op           500 B/op          5 allocs/op
+BenchmarkOrderBook_LargeOrderBook_Memory-16      7782270               381.1 ns/op           400 B/op          4 allocs/op
 ```
 
 Key performance highlights:
-- Order storage: ~5M ops/sec (~274 ns/op)
-- Order retrieval: ~100M ops/sec (~10 ns/op)
-- Order processing: ~2.7M ops/sec (~489 ns/op)
+- Order storage: ~10M ops/sec (~292 ns/op)
+- Order retrieval: ~238M ops/sec (~10 ns/op)
+- Order processing: ~4.3M ops/sec (~542 ns/op)
 
 ### Redis Backend Performance
 
-The Redis backend sacrifices some raw performance for distributed capabilities, making it suitable for scalable multi-instance deployments.
+The Redis backend sacrifices some raw performance for distributed capabilities, making it suitable for scalable multi-instance deployments. These benchmarks were performed with Redis 7.4.0 running natively on the local machine.
 
 ```
-BenchmarkRedisBackend_StoreOrder-16                 4154            285153 ns/op            1274 B/op         25 allocs/op
-BenchmarkRedisBackend_GetOrder-16                   8118            147060 ns/op            1377 B/op         25 allocs/op
-BenchmarkRedisBackend_AppendToSide-16               1821            580180 ns/op            1876 B/op         46 allocs/op
-BenchmarkOrderBook_Process_Redis-16                 1641            718553 ns/op            2252 B/op         56 allocs/op
-BenchmarkOrderBook_SmallOrderBook_Redis-16          2077            567536 ns/op            2472 B/op         46 allocs/op
+BenchmarkRedisBackend_StoreOrder-16                 8398            284941 ns/op            1274 B/op         25 allocs/op
+BenchmarkRedisBackend_GetOrder-16                  16641            147019 ns/op            1377 B/op         25 allocs/op
+BenchmarkRedisBackend_AppendToSide-16               3933            577733 ns/op            1876 B/op         46 allocs/op
+BenchmarkOrderBook_Process_Redis-16                 3280            717351 ns/op            2253 B/op         56 allocs/op
+BenchmarkOrderBook_SmallOrderBook_Redis-16          4160            571775 ns/op            2490 B/op         46 allocs/op
 ```
 
 Key performance highlights:
-- Order storage: ~4K ops/sec (~285 μs/op)
-- Order retrieval: ~8K ops/sec (~147 μs/op)
-- Order processing: ~1.6K ops/sec (~719 μs/op)
+- Order storage: ~3.5K ops/sec (~285 μs/op)
+- Order retrieval: ~6.8K ops/sec (~147 μs/op)
+- Order processing: ~1.4K ops/sec (~717 μs/op)
+
+Redis's own internal benchmark shows excellent raw performance:
+```
+SET: 694,500 requests per second
+GET: 757,636 requests per second
+```
+
+The difference between Redis's raw performance and our benchmarks is due to the additional processing required for order serialization, Redis command composition, and network communication.
 
 ### Performance Comparison
 
 |  Operation  | Memory Backend | Redis Backend | Difference |
 |-------------|---------------|---------------|------------|
-| Store Order | 274 ns        | 285 μs        | ~1000x     |
+| Store Order | 292 ns        | 285 μs        | ~975x      |
 | Get Order   | 10 ns         | 147 μs        | ~14700x    |
-| Process Order | 489 ns      | 719 μs        | ~1470x     |
+| Process Order | 542 ns      | 717 μs        | ~1325x     |
 
-The memory backend is significantly faster (up to 14,700x for certain operations), but the Redis backend offers distributed capabilities that may be necessary for certain applications.
+The memory backend is significantly faster (up to ~14,700x for certain operations), but the Redis backend offers distributed capabilities that may be necessary for certain applications. The performance difference is expected given the nature of in-memory operations versus network communication with a separate process.
 
 ## Usage
 
