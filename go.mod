@@ -1,10 +1,8 @@
 module github.com/erain9/matchingo
 
-go 1.20
+go 1.22
 
 require (
-	github.com/gammazero/deque v0.2.1
-	github.com/hashicorp/go-set v0.1.13
 	github.com/nikolaydubina/fpdecimal v0.16.0
 	github.com/redis/go-redis/v9 v9.7.3
 )
