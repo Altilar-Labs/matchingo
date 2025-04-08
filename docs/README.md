@@ -27,125 +27,219 @@ This will:
 - Build both server and client binaries
 - Place the binaries in the `./bin/` directory
 
-## Running the Server
+## Step-by-Step Functional Test
 
-1. Start the gRPC server:
+Follow these instructions precisely to run a complete functional test of the system:
+
+### 1. Ensure No Existing Server Is Running
+
+First, make sure no orderbook server is already running:
+
 ```bash
-./bin/orderbook-server
+# Find and kill any existing server processes
+pkill -f orderbook-server
 ```
 
-The server will:
-- Start on port 50051
-- Create a default order book
-- Enable gRPC reflection for tools like grpcurl
+### 2. Start the Server
 
-## Running the Client
+Start the server in the background:
 
-The client supports several commands for interacting with the order book. Here are some examples:
-
-### Create a Sell Order
 ```bash
+# Make sure you're in the project root directory
+cd /path/to/matchingo
+
+# Start the server and send it to background
+./bin/orderbook-server &
+
+# Wait a moment for server to initialize
+sleep 2
+
+# Note the process ID if you need to stop it later
+echo "Server PID: $!"
+```
+
+### 3. Basic Order Book Testing
+
+Let's create and interact with the order book:
+
+```bash
+# Create a sell limit order
 ./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
-```
-This creates a sell order with:
-- Book: default
-- Side: SELL
-- Type: LIMIT
-- Quantity: 0.5
-- Price: 100.0
-- Order ID: sell1
 
-### Create a Buy Order
-```bash
-./bin/orderbook-client create-order default BUY LIMIT 0.5 100.0 buy1
-```
-This creates a buy order with:
-- Book: default
-- Side: BUY
-- Type: LIMIT
-- Quantity: 0.5
-- Price: 100.0
-- Order ID: buy1
+# Check the order book state
+./bin/orderbook-client get-state default
 
-### Check Order Book State
-```bash
+# Get details of the order we just created
+./bin/orderbook-client get-order default sell1
+
+# Create a buy limit order at a lower price (shouldn't match)
+./bin/orderbook-client create-order default BUY LIMIT 0.4 95.0 buy1
+
+# Check the order book state again (should show both orders)
 ./bin/orderbook-client get-state default
 ```
-This shows the current state of the order book, including all bids and asks.
 
-### Get Specific Order Details
+### 4. Trade Matching
+
+Now let's create matching orders:
+
 ```bash
-./bin/orderbook-client get-order default buy1
+# Create a buy order that matches with the sell order
+./bin/orderbook-client create-order default BUY LIMIT 0.3 100.0 buy2
+
+# Check the order book state (sell1 should be partially filled)
+./bin/orderbook-client get-state default
+
+# Create a market buy order to match remainder of sell1
+./bin/orderbook-client create-order default BUY MARKET 0.2 0.0 buy3
+
+# Check the order book state (should only have buy1 left)
+./bin/orderbook-client get-state default
 ```
-This shows details for a specific order.
 
-### Cancel an Order
+### 5. Stop-Limit Order Testing
+
+Test stop-limit orders:
+
 ```bash
-./bin/orderbook-client cancel-order default buy1
+# Create a buy stop-limit order (triggers when price >= 105.0)
+./bin/orderbook-client create-order default BUY STOP_LIMIT 1.0 100.0 stoplimit1 105.0
+
+# Check the order (should be open but not visible in order book)
+./bin/orderbook-client get-order default stoplimit1
+./bin/orderbook-client get-state default
+
+# Create a sell order at a price above the stop price
+./bin/orderbook-client create-order default SELL LIMIT 0.1 110.0 sell2
+
+# This should activate the stop-limit order
+./bin/orderbook-client get-order default stoplimit1
+./bin/orderbook-client get-state default
 ```
-This cancels the specified order.
 
-## Common Issues
+### 6. Order Cancellation
 
-1. **Port Already in Use**
-   If you see the error "address already in use", it means another instance of the server is running. You can:
-   - Find and kill the existing process: `lsof -i :50051`
-   - Or use a different port by modifying the server configuration
+Test cancelling orders:
 
-2. **Order Already Exists**
-   If you get an "order exists" error, try:
-   - Using a different order ID
-   - Canceling the existing order first
-   - Checking the order book state to see existing orders
-
-3. **Connection Issues**
-   If the client can't connect to the server:
-   - Make sure the server is running
-   - Check that you're using the correct port
-   - Verify network connectivity
-
-## Additional Commands
-
-### List All Order Books
 ```bash
+# Create another order
+./bin/orderbook-client create-order default SELL LIMIT 2.0 120.0 sell3
+
+# Verify it exists
+./bin/orderbook-client get-state default
+
+# Cancel the order
+./bin/orderbook-client cancel-order default sell3
+
+# Verify it's gone
+./bin/orderbook-client get-state default
+```
+
+### 7. Creating Multiple Order Books
+
+```bash
+# Create another order book
+./bin/orderbook-client create-book crypto
+
+# List all order books
 ./bin/orderbook-client list-books
+
+# Create orders in the new book
+./bin/orderbook-client create-order crypto BUY LIMIT 1.0 50.0 crypto-buy1
+./bin/orderbook-client create-order crypto SELL LIMIT 1.0 55.0 crypto-sell1
+
+# Check the new order book state
+./bin/orderbook-client get-state crypto
 ```
 
-### Create a New Order Book
+### 8. Cleanup
+
+When you're done testing, clean up:
+
 ```bash
+# Kill the server
+pkill -f orderbook-server
+```
+
+## Troubleshooting
+
+### Server Already Running
+
+If you see this error: "listen tcp :50051: bind: address already in use"
+
+```bash
+# Find processes using port 50051
+lsof -i :50051
+
+# Kill the process (replace PID with the actual process ID)
+kill -9 PID
+```
+
+### Client Can't Connect
+
+If the client commands fail with connection issues:
+
+1. Make sure the server is running:
+```bash
+ps aux | grep orderbook-server
+```
+
+2. Check the server logs for any errors
+
+3. Try restarting the server:
+```bash
+pkill -f orderbook-server
+./bin/orderbook-server &
+```
+
+### Order Creation Errors
+
+If you get "order already exists" errors, use a different order ID or delete the existing order:
+
+```bash
+./bin/orderbook-client cancel-order default order_id
+```
+
+## Additional Commands Reference
+
+### Create Order with Different Types
+
+```bash
+# Limit order
+./bin/orderbook-client create-order default BUY LIMIT 1.0 100.0 limit1
+
+# Market order
+./bin/orderbook-client create-order default SELL MARKET 1.0 0.0 market1
+
+# Stop-limit order (stop price of 105.0, limit price of 100.0)
+./bin/orderbook-client create-order default BUY STOP_LIMIT 1.0 100.0 stop1 105.0
+```
+
+### Order Book Management
+
+```bash
+# Create book
 ./bin/orderbook-client create-book mybook
-```
 
-### Delete an Order Book
-```bash
+# Get book
+./bin/orderbook-client get-book mybook
+
+# List books
+./bin/orderbook-client list-books
+
+# Delete book
 ./bin/orderbook-client delete-book mybook
 ```
 
-## Debugging
+### Order Management
 
-The server logs are helpful for debugging. You can see:
-- Order creation and processing
-- Matching engine activity
-- Error messages and warnings
-
-## Testing Different Scenarios
-
-1. **Market Orders**
 ```bash
-./bin/orderbook-client create-order default BUY MARKET 1.0 0.0 market1
-```
+# Get order
+./bin/orderbook-client get-order default order1
 
-2. **Different Time-in-Force**
-```bash
-./bin/orderbook-client create-order default SELL LIMIT 1.0 100.0 ioc1 --time-in-force=IOC
-```
+# Cancel order
+./bin/orderbook-client cancel-order default order1
 
-3. **Multiple Orders**
-```bash
-# Create multiple sell orders
-./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
-./bin/orderbook-client create-order default SELL LIMIT 0.5 101.0 sell2
-
-# Create a buy order that matches
-./bin/orderbook-client create-order default BUY LIMIT 1.0 101.0 buy1
+# Get order book state
+./bin/orderbook-client get-state default
 ``` 
