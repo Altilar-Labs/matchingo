@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/erain9/matchingo/pkg/core"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/redis/go-redis/v9"
-	"github.com/erain9/matchingo/pkg/core"
 )
 
 // RedisBackend implements OrderBookBackend interface with Redis storage

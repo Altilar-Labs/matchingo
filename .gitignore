@@ -1,6 +1,6 @@
 # IDE specific files
-.idea
-.vscode
+.idea/
+.vscode/
 *.swp
 *.swo
 
@@ -10,12 +10,16 @@
 *.dll
 *.so
 *.dylib
+bin/
 
 # Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+# Dependency directories (remove the comment below to include it)
+vendor/
 
 # Go workspace file
 go.work
@@ -25,3 +29,17 @@ go.work
 
 # Mac OS X
 .DS_Store
+Thumbs.db
+
+# Generated files
+*.pb.go
+*.pb.gw.go
+*.swagger.json
+*.swagger.yaml
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
