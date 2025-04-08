@@ -1,245 +1,301 @@
-# Matchingo - gRPC Server and Client Test Documentation
+# Matchingo Documentation
 
-This document provides test instructions and examples for running the Matchingo gRPC server and client components. It includes step-by-step guides for testing different order book scenarios and troubleshooting common issues.
+This document provides step-by-step instructions for testing and using the Matchingo order book system.
 
-## Prerequisites
+## Important Note
 
-- Go 1.21 or later
-- Make
-- Protocol Buffers compiler (protoc)
+**Before creating any orders, you MUST first create an order book!** 
+If you get an error like `order book default not found`, it means you tried to use an order book that doesn't exist yet.
 
-## Building the Project
-
-1. Clone the repository:
+Example:
 ```bash
-git clone https://github.com/erain9/matchingo.git
-cd matchingo
+# First create the order book
+./bin/orderbook-client create-book default --backend=memory
+
+# Then you can create orders
+./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
 ```
 
-2. Build the project:
-```bash
-make clean && make build-all
-```
+## Step-by-Step Testing Guide
 
-This will:
-- Clean any previous builds
-- Generate protobuf code
-- Build both server and client binaries
-- Place the binaries in the `./bin/` directory
+Follow these steps to test the Matchingo order book system:
 
-## Step-by-Step Functional Test
+### 1. Start the Server
 
-Follow these instructions precisely to run a complete functional test of the system:
-
-### 1. Ensure No Existing Server Is Running
-
-First, make sure no orderbook server is already running:
+First, make sure you have built the project:
 
 ```bash
-# Find and kill any existing server processes
-pkill -f orderbook-server
+make clean && make build
 ```
 
-### 2. Start the Server
-
-Start the server in the background:
+Then start the server:
 
 ```bash
-# Make sure you're in the project root directory
-cd /path/to/matchingo
-
-# Start the server and send it to background
-./bin/orderbook-server &
-
-# Wait a moment for server to initialize
-sleep 2
-
-# Note the process ID if you need to stop it later
-echo "Server PID: $!"
+./bin/orderbook-server
 ```
 
-### 3. Basic Order Book Testing
+You should see output indicating the server has started successfully:
 
-Let's create and interact with the order book:
+```
+INFO Starting gRPC server on port 50051...
+```
+
+### 2. Create an Order Book
+
+Before you can create any orders, you must first create an order book:
+
+```bash
+./bin/orderbook-client create-book default --backend=memory
+```
+
+Expected output:
+
+```
+INFO Created order book "default"
+```
+
+### 3. Create Orders
+
+Now you can create orders in the order book:
 
 ```bash
 # Create a sell limit order
 ./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
 
-# Check the order book state
-./bin/orderbook-client get-state default
+# Create a buy limit order
+./bin/orderbook-client create-order default BUY LIMIT 1.0 95.0 buy1
+```
 
-# Get details of the order we just created
-./bin/orderbook-client get-order default sell1
+Expected output for the first command:
 
-# Create a buy limit order at a lower price (shouldn't match)
-./bin/orderbook-client create-order default BUY LIMIT 0.4 95.0 buy1
+```
+INFO Created order sell1 in order book default
+```
 
-# Check the order book state again (should show both orders)
+### 4. View Order Book State
+
+Check the current state of the order book:
+
+```bash
 ./bin/orderbook-client get-state default
 ```
 
-### 4. Trade Matching
+Expected output:
 
-Now let's create matching orders:
+```
++----------------- Order Book: default -----------------+
+|                BIDS                |       ASKS       |
++--------------------+---------------+------------------+
+| Price    | Quantity | Orders | Price    | Quantity | Orders |
++----------+----------+--------+----------+----------+--------+
+| 95.00    | 1.0000   | 1      | 100.00   | 0.5000   | 1      |
++----------+----------+--------+----------+----------+--------+
+```
+
+### 5. Create a Market Order
+
+Create a market order that will match against existing limit orders:
 
 ```bash
-# Create a buy order that matches with the sell order
-./bin/orderbook-client create-order default BUY LIMIT 0.3 100.0 buy2
+./bin/orderbook-client create-order default BUY MARKET 0.3 0.0 buy2
+```
 
-# Check the order book state (sell1 should be partially filled)
-./bin/orderbook-client get-state default
+Expected output:
 
-# Create a market buy order to match remainder of sell1
-./bin/orderbook-client create-order default BUY MARKET 0.2 0.0 buy3
+```
+INFO Created order buy2 in order book default
+INFO Order matched! Taker: buy2, Maker: sell1, Quantity: 0.3, Price: 100.0
+```
 
-# Check the order book state (should only have buy1 left)
+### 6. Check Order Book State Again
+
+Check how the order book state has changed:
+
+```bash
 ./bin/orderbook-client get-state default
 ```
 
-### 5. Stop-Limit Order Testing
+Expected output:
 
-Test stop-limit orders:
-
-```bash
-# Create a buy stop-limit order (triggers when price >= 105.0)
-./bin/orderbook-client create-order default BUY STOP_LIMIT 1.0 100.0 stoplimit1 105.0
-
-# Check the order (should be open but not visible in order book)
-./bin/orderbook-client get-order default stoplimit1
-./bin/orderbook-client get-state default
-
-# Create a sell order at a price above the stop price
-./bin/orderbook-client create-order default SELL LIMIT 0.1 110.0 sell2
-
-# This should activate the stop-limit order
-./bin/orderbook-client get-order default stoplimit1
-./bin/orderbook-client get-state default
+```
++----------------- Order Book: default -----------------+
+|                BIDS                |       ASKS       |
++--------------------+---------------+------------------+
+| Price    | Quantity | Orders | Price    | Quantity | Orders |
++----------+----------+--------+----------+----------+--------+
+| 95.00    | 1.0000   | 1      | 100.00   | 0.2000   | 1      |
++----------+----------+--------+----------+----------+--------+
 ```
 
-### 6. Order Cancellation
+Notice the ASKS quantity has been reduced by the matched amount (0.3).
 
-Test cancelling orders:
+### 7. Create a Stop Limit Order
+
+Create a stop limit order that will become active when the stop price is reached:
 
 ```bash
-# Create another order
-./bin/orderbook-client create-order default SELL LIMIT 2.0 120.0 sell3
-
-# Verify it exists
-./bin/orderbook-client get-state default
-
-# Cancel the order
-./bin/orderbook-client cancel-order default sell3
-
-# Verify it's gone
-./bin/orderbook-client get-state default
+./bin/orderbook-client create-order default BUY STOP_LIMIT 2.0 102.0 buy3 --stop-price=101.0
 ```
 
-### 7. Creating Multiple Order Books
+Expected output:
+
+```
+INFO Created order buy3 in order book default
+```
+
+### 8. Cancel an Order
+
+Cancel an existing order:
 
 ```bash
-# Create another order book
-./bin/orderbook-client create-book crypto
+./bin/orderbook-client cancel-order default buy1
+```
 
-# List all order books
+Expected output:
+
+```
+INFO Cancelled order buy1 in order book default
+```
+
+### 9. List All Order Books
+
+List all available order books:
+
+```bash
 ./bin/orderbook-client list-books
-
-# Create orders in the new book
-./bin/orderbook-client create-order crypto BUY LIMIT 1.0 50.0 crypto-buy1
-./bin/orderbook-client create-order crypto SELL LIMIT 1.0 55.0 crypto-sell1
-
-# Check the new order book state
-./bin/orderbook-client get-state crypto
 ```
 
-### 8. Cleanup
+Expected output:
 
-When you're done testing, clean up:
+```
+INFO Order books: [default]
+```
+
+### 10. Create Another Order Book
+
+Create another order book with a different name:
 
 ```bash
-# Kill the server
-pkill -f orderbook-server
+./bin/orderbook-client create-book BTCUSD --backend=memory
+```
+
+Expected output:
+
+```
+INFO Created order book "BTCUSD"
+```
+
+### 11. Test with Redis Backend
+
+If you have Redis running, you can test with the Redis backend:
+
+```bash
+# Create an order book with Redis backend
+./bin/orderbook-client create-book ETHUSD --backend=redis
+
+# Add orders to the Redis-backed order book
+./bin/orderbook-client create-order ETHUSD BUY LIMIT 2.0 1800.0 eth_buy1
+./bin/orderbook-client create-order ETHUSD SELL LIMIT 1.5 1850.0 eth_sell1
+
+# Check the state
+./bin/orderbook-client get-state ETHUSD
+```
+
+### 12. Test Different Time-in-Force Options
+
+Test immediate-or-cancel (IOC) order:
+
+```bash
+./bin/orderbook-client create-order default BUY LIMIT 0.1 90.0 ioc_order --tif=IOC
+```
+
+Test fill-or-kill (FOK) order:
+
+```bash
+./bin/orderbook-client create-order default SELL LIMIT 2.0 105.0 fok_order --tif=FOK
 ```
 
 ## Troubleshooting
 
-### Server Already Running
+### Common Errors
 
-If you see this error: "listen tcp :50051: bind: address already in use"
+1. **Order book not found**:
+   ```
+   CreateOrder failed error="rpc error: code = NotFound desc = order book default not found"
+   ```
+   **Solution**: Create the order book first with `create-book` command before creating orders.
+
+2. **Duplicate order ID**:
+   ```
+   CreateOrder failed error="rpc error: code = AlreadyExists desc = order with ID sell1 already exists"
+   ```
+   **Solution**: Use a unique order ID for each order within the same order book.
+
+3. **Invalid order parameters**:
+   ```
+   CreateOrder failed error="rpc error: code = InvalidArgument desc = invalid order parameters"
+   ```
+   **Solution**: Ensure all order parameters are valid (e.g., positive quantity, valid price for limit orders).
+
+4. **Server not running**:
+   ```
+   Failed to connect to server error="context deadline exceeded"
+   ```
+   **Solution**: Ensure the server is running with `./bin/orderbook-server`.
+
+## Command Reference
+
+### Server Commands
 
 ```bash
-# Find processes using port 50051
-lsof -i :50051
+# Start server
+./bin/orderbook-server
 
-# Kill the process (replace PID with the actual process ID)
-kill -9 PID
+# Start server with custom port
+./bin/orderbook-server --port=50052
+
+# Start server with debug logging
+./bin/orderbook-server --log-level=debug
+
+# Start server with pretty logging
+./bin/orderbook-server --pretty
 ```
 
-### Client Can't Connect
-
-If the client commands fail with connection issues:
-
-1. Make sure the server is running:
-```bash
-ps aux | grep orderbook-server
-```
-
-2. Check the server logs for any errors
-
-3. Try restarting the server:
-```bash
-pkill -f orderbook-server
-./bin/orderbook-server &
-```
-
-### Order Creation Errors
-
-If you get "order already exists" errors, use a different order ID or delete the existing order:
+### Client Commands
 
 ```bash
-./bin/orderbook-client cancel-order default order_id
-```
+# Create order book
+./bin/orderbook-client create-book <name> [--backend=memory|redis]
 
-## Additional Commands Reference
-
-### Create Order with Different Types
-
-```bash
-# Limit order
-./bin/orderbook-client create-order default BUY LIMIT 1.0 100.0 limit1
-
-# Market order
-./bin/orderbook-client create-order default SELL MARKET 1.0 0.0 market1
-
-# Stop-limit order (stop price of 105.0, limit price of 100.0)
-./bin/orderbook-client create-order default BUY STOP_LIMIT 1.0 100.0 stop1 105.0
-```
-
-### Order Book Management
-
-```bash
-# Create book
-./bin/orderbook-client create-book mybook
-
-# Get book
-./bin/orderbook-client get-book mybook
-
-# List books
-./bin/orderbook-client list-books
-
-# Delete book
-./bin/orderbook-client delete-book mybook
-```
-
-### Order Management
-
-```bash
-# Get order
-./bin/orderbook-client get-order default order1
+# Create order
+./bin/orderbook-client create-order <book> <side> <type> <quantity> <price> <id> [--stop-price=<price>] [--tif=GTC|IOC|FOK]
 
 # Cancel order
-./bin/orderbook-client cancel-order default order1
+./bin/orderbook-client cancel-order <book> <order-id>
 
 # Get order book state
-./bin/orderbook-client get-state default
-``` 
+./bin/orderbook-client get-state <book>
+
+# List order books
+./bin/orderbook-client list-books
+
+# Get specific order
+./bin/orderbook-client get-order <book> <order-id>
+```
+
+### Order Parameters
+
+- **Side**: `BUY` or `SELL`
+- **Type**: `MARKET`, `LIMIT`, or `STOP_LIMIT`
+- **Quantity**: Order quantity (positive number)
+- **Price**: Order price (0.0 for market orders)
+- **ID**: Unique order identifier
+- **Stop Price**: Trigger price for stop-limit orders
+- **TIF** (Time-in-Force): `GTC` (Good Till Canceled, default), `IOC` (Immediate or Cancel), or `FOK` (Fill or Kill)
+
+## Additional Information
+
+For more detailed information, refer to:
+- API Documentation: See [api.md](api.md)
+- Development Guide: See [development.md](development.md)
+- Testing Guide: See [testing.md](testing.md) 
