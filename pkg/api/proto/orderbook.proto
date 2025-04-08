@@ -1,0 +1,185 @@
+syntax = "proto3";
+
+package matchingo.api;
+
+option go_package = "github.com/erain9/matchingo/pkg/api/proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// OrderBookService provides all operations for managing multiple order books
+service OrderBookService {
+  // CreateOrderBook creates a new order book with the given name
+  rpc CreateOrderBook(CreateOrderBookRequest) returns (OrderBookResponse);
+  
+  // GetOrderBook retrieves information about an order book
+  rpc GetOrderBook(GetOrderBookRequest) returns (OrderBookResponse);
+  
+  // ListOrderBooks lists all available order books
+  rpc ListOrderBooks(ListOrderBooksRequest) returns (ListOrderBooksResponse);
+  
+  // DeleteOrderBook deletes an order book
+  rpc DeleteOrderBook(DeleteOrderBookRequest) returns (google.protobuf.Empty);
+  
+  // CreateOrder submits a new order to the specified order book
+  rpc CreateOrder(CreateOrderRequest) returns (OrderResponse);
+  
+  // GetOrder retrieves an order by ID
+  rpc GetOrder(GetOrderRequest) returns (OrderResponse);
+  
+  // CancelOrder cancels an existing order
+  rpc CancelOrder(CancelOrderRequest) returns (google.protobuf.Empty);
+  
+  // GetOrderBookState retrieves the current state of an order book
+  rpc GetOrderBookState(GetOrderBookStateRequest) returns (OrderBookStateResponse);
+}
+
+// Request to create a new order book
+message CreateOrderBookRequest {
+  string name = 1;
+  BackendType backend_type = 2;
+  // Backend-specific options, such as Redis connection details
+  map<string, string> options = 3;
+}
+
+// Type of backend storage for the order book
+enum BackendType {
+  MEMORY = 0;
+  REDIS = 1;
+}
+
+// Response containing order book information
+message OrderBookResponse {
+  string name = 1;
+  BackendType backend_type = 2;
+  google.protobuf.Timestamp created_at = 3;
+  uint64 order_count = 4;
+}
+
+// Request to retrieve an order book
+message GetOrderBookRequest {
+  string name = 1;
+}
+
+// Request to list all order books
+message ListOrderBooksRequest {
+  // For pagination, the maximum number of items to return
+  int32 limit = 1;
+  // For pagination, the offset from which to start returning items
+  int32 offset = 2;
+}
+
+// Response containing a list of order books
+message ListOrderBooksResponse {
+  repeated OrderBookResponse order_books = 1;
+  int32 total = 2;
+}
+
+// Request to delete an order book
+message DeleteOrderBookRequest {
+  string name = 1;
+}
+
+// Request to create a new order
+message CreateOrderRequest {
+  string order_book_name = 1;
+  string order_id = 2;
+  OrderSide side = 3;
+  string quantity = 4;
+  string price = 5;
+  OrderType order_type = 6;
+  TimeInForce time_in_force = 7;
+  string stop_price = 8;  // Only for stop orders
+  string oco_id = 9;     // Only for OCO orders
+}
+
+// Types of orders
+enum OrderType {
+  LIMIT = 0;
+  MARKET = 1;
+  STOP = 2;
+  STOP_LIMIT = 3;
+}
+
+// Order side: buy or sell
+enum OrderSide {
+  BUY = 0;
+  SELL = 1;
+}
+
+// Time in force for orders
+enum TimeInForce {
+  GTC = 0;  // Good Till Canceled
+  IOC = 1;  // Immediate or Cancel
+  FOK = 2;  // Fill or Kill
+}
+
+// Response containing order information
+message OrderResponse {
+  string order_id = 1;
+  string order_book_name = 2;
+  OrderSide side = 3;
+  string quantity = 4;
+  string price = 5;
+  OrderType order_type = 6;
+  TimeInForce time_in_force = 7;
+  string stop_price = 8;
+  OrderStatus status = 9;
+  string filled_quantity = 10;
+  string remaining_quantity = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  repeated Fill fills = 14;
+  string oco_id = 15;
+}
+
+// Status of an order
+enum OrderStatus {
+  PENDING = 0;
+  OPEN = 1;
+  FILLED = 2;
+  PARTIALLY_FILLED = 3;
+  CANCELED = 4;
+  REJECTED = 5;
+}
+
+// Represents a fill (trade) that has occurred
+message Fill {
+  string price = 1;
+  string quantity = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Request to retrieve an order
+message GetOrderRequest {
+  string order_book_name = 1;
+  string order_id = 2;
+}
+
+// Request to cancel an order
+message CancelOrderRequest {
+  string order_book_name = 1;
+  string order_id = 2;
+}
+
+// Request to get the current state of an order book
+message GetOrderBookStateRequest {
+  string name = 1;
+  // Optional number of price levels to retrieve
+  int32 depth = 2;
+}
+
+// Response containing order book state
+message OrderBookStateResponse {
+  string name = 1;
+  repeated PriceLevel bids = 2;
+  repeated PriceLevel asks = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Represents a price level in the order book
+message PriceLevel {
+  string price = 1;
+  string total_quantity = 2;
+  int32 order_count = 3;
+} 

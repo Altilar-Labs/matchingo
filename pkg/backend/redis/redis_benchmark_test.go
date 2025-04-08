@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erain9/matchingo/pkg/core"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/redis/go-redis/v9"
-	"github.com/erain9/matchingo/pkg/core"
 )
 
 // skipIfNoRedis will skip the test if Redis is not available

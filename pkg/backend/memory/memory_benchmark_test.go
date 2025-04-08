@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/nikolaydubina/fpdecimal"
 	"github.com/erain9/matchingo/pkg/core"
+	"github.com/nikolaydubina/fpdecimal"
 )
 
 func BenchmarkMemoryBackend_StoreOrder(b *testing.B) {

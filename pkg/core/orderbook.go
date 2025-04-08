@@ -437,3 +437,13 @@ func isPriceMatching(side Side, orderPrice, bookPrice fpdecimal.Decimal) bool {
 	// For sell orders, the order price must be <= the book price (buy price)
 	return orderPrice.LessThanOrEqual(bookPrice)
 }
+
+// GetBids returns the bid side of the order book
+func (ob *OrderBook) GetBids() interface{} {
+	return ob.backend.GetBids()
+}
+
+// GetAsks returns the ask side of the order book
+func (ob *OrderBook) GetAsks() interface{} {
+	return ob.backend.GetAsks()
+}
