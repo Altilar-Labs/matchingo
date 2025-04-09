@@ -38,6 +38,8 @@ A high-performance order book matching engine written in Go.
 - Go 1.21 or later
 - Make
 - Protocol Buffers compiler (protoc)
+- docker
+- kafka
 
 ## Building
 
@@ -59,6 +61,28 @@ This will:
 - Place the binaries in the `./bin/` directory
 
 ## Running
+
+### kafka (optional)
+
+Propate transaction message to the queue is optional, you can ignore this step if you don't want to set it up.
+
+```bash
+docker pull apache/kafka:4.0.0
+
+docker run -p 9092:9092 apache/kafka:4.0.0
+```
+
+#### Create a test topic
+
+```bash
+bin/kafka-topics.sh --create --topic test-msg-queue --bootstrap-server localhost:9092
+```
+
+#### Read message from the topic
+
+```bash
+bin/kafka-console-consumer.sh --topic test-msg-queue  --from-beginning --bootstrap-server localhost:9092
+```
 
 ### Server
 
@@ -193,10 +217,16 @@ Create an order book:
 ./bin/orderbook-client create-book --name=btcusd --backend=memory
 ```
 
-Create an order:
+Create a buy order:
 
 ```bash
 ./bin/orderbook-client create-order --book=btcusd --id=order1 --side=buy --type=limit --qty=1.0 --price=50000.0
+```
+
+Create a sell order:
+
+```bash
+./bin/orderbook-client create-order --book=btcusd --id=order2 --side=sell --type=limit --qty=1.0 --price=50000.0
 ```
 
 List all order books:

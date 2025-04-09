@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"text/tabwriter"
@@ -64,17 +65,7 @@ func main() {
 	case "delete-book":
 		deleteOrderBook(ctx, client)
 	case "create-order":
-		if len(os.Args) < 7 {
-			fmt.Println("Usage: create-order <book> <side> <type> <quantity> <price> <id>")
-			os.Exit(1)
-		}
-		bookName := os.Args[1]
-		side := os.Args[2]
-		orderType := os.Args[3]
-		quantity := os.Args[4]
-		price := os.Args[5]
-		orderID := os.Args[6]
-		createOrder(ctx, client, bookName, side, orderType, quantity, price, orderID)
+		createOrder(ctx, client, os.Args[1:]...)
 	case "get-order":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: get-order <book> <id>")
@@ -231,21 +222,47 @@ func deleteOrderBook(ctx context.Context, client proto.OrderBookServiceClient) {
 	log.Info().Str("name", *bookName).Msg("Order book deleted")
 }
 
-func createOrder(ctx context.Context, client proto.OrderBookServiceClient, bookName, side, orderType, quantity, price, orderID string) {
+func createOrder(ctx context.Context, client proto.OrderBookServiceClient, args ...string) {
+	// Define flags
+	bookName := flag.String("book", "", "Order book name")
+	orderID := flag.String("id", "", "Order ID")
+	side := flag.String("side", "", "Order side (BUY/SELL)")
+	orderType := flag.String("type", "", "Order type (MARKET/LIMIT/STOP/STOP_LIMIT)")
+	quantity := flag.String("qty", "", "Order quantity")
+	price := flag.String("price", "", "Order price")
+	flag.Parse()
+
+	// If no flags are set, use positional arguments
+	if *bookName == "" && len(args) >= 6 {
+		bookName = &args[0]
+		side = &args[1]
+		orderType = &args[2]
+		quantity = &args[3]
+		price = &args[4]
+		orderID = &args[5]
+	}
+
+	// Validate required fields
+	if *bookName == "" || *orderID == "" || *side == "" || *orderType == "" || *quantity == "" {
+		fmt.Println("Usage: create-order <book> <side> <type> <quantity> <price> <id>")
+		fmt.Println("   or: create-order --book=<name> --id=<id> --side=<side> --type=<type> --qty=<quantity> --price=<price>")
+		os.Exit(1)
+	}
+
 	// Convert side string to enum
 	var sideEnum proto.OrderSide
-	switch side {
+	switch strings.ToUpper(*side) {
 	case "BUY":
 		sideEnum = proto.OrderSide_BUY
 	case "SELL":
 		sideEnum = proto.OrderSide_SELL
 	default:
-		log.Fatal().Str("side", side).Msg("Unsupported side")
+		log.Fatal().Str("side", *side).Msg("Unsupported side")
 	}
 
 	// Convert order type string to enum
 	var typeEnum proto.OrderType
-	switch orderType {
+	switch strings.ToUpper(*orderType) {
 	case "MARKET":
 		typeEnum = proto.OrderType_MARKET
 	case "LIMIT":
@@ -255,17 +272,17 @@ func createOrder(ctx context.Context, client proto.OrderBookServiceClient, bookN
 	case "STOP_LIMIT":
 		typeEnum = proto.OrderType_STOP_LIMIT
 	default:
-		log.Fatal().Str("type", orderType).Msg("Unsupported order type")
+		log.Fatal().Str("type", *orderType).Msg("Unsupported order type")
 	}
 
 	// Create request
 	req := &proto.CreateOrderRequest{
-		OrderBookName: bookName,
-		OrderId:       orderID,
+		OrderBookName: *bookName,
+		OrderId:       *orderID,
 		Side:          sideEnum,
 		OrderType:     typeEnum,
-		Quantity:      quantity,
-		Price:         price,
+		Quantity:      *quantity,
+		Price:         *price,
 		TimeInForce:   proto.TimeInForce_GTC,
 	}
 

@@ -182,4 +182,21 @@ message PriceLevel {
   string price = 1;
   string total_quantity = 2;
   int32 order_count = 3;
+}
+
+// Represents a trade that has occurred
+message Trade {
+  string price = 1;
+  string quantity = 2;
+}
+
+// DoneMessage represents the message structure for the Done object
+// to be sent to the message queue
+// TODO: This is just a simplied version of message for demo, subject
+// to revisit.
+message DoneMessage {
+  string order_id = 1;
+  string executed_quantity = 2;
+  string remaining_quantity = 3;
+  repeated Trade trades = 4;
 } 
