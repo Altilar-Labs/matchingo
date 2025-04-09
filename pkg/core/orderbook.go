@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/erain9/matchingo/pkg/db/queue"
+	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/nikolaydubina/fpdecimal"
 )
 
@@ -328,6 +330,21 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (done *Done, err error
 	// Update the processed and left quantities in the done object
 	done.setLeftQuantity(&remainingQty)
 
+	// Correct the conversion logic for Done to DoneMessage
+	queueSender := &queue.QueueMessageSender{}
+	doneMessage := &messaging.DoneMessage{
+		OrderID:      done.Order.ID(),
+		ExecutedQty:  done.Processed.String(),
+		RemainingQty: done.Left.String(),
+		Trades:       convertTrades(done.tradesToSlice()),
+	}
+
+	// Send the DoneMessage to Kafka. This won't block the call
+	// if it returns error.
+	if err := queueSender.SendDoneMessage(doneMessage); err != nil {
+		fmt.Println(err) // TODO: Use logger in orderbook function.
+	}
+
 	return done, nil
 }
 
@@ -446,4 +463,16 @@ func (ob *OrderBook) GetBids() interface{} {
 // GetAsks returns the ask side of the order book
 func (ob *OrderBook) GetAsks() interface{} {
 	return ob.backend.GetAsks()
+}
+
+// Implement convertTrades function
+func convertTrades(trades []TradeOrder) []messaging.Trade {
+	converted := make([]messaging.Trade, len(trades))
+	for i, trade := range trades {
+		converted[i] = messaging.Trade{
+			Price:    trade.Price.String(),
+			Quantity: trade.Quantity.String(),
+		}
+	}
+	return converted
 }
