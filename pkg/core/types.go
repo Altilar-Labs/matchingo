@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 
+	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/nikolaydubina/fpdecimal"
 )
 
@@ -108,6 +109,32 @@ func (d *Done) setLeftQuantity(quantity *fpdecimal.Decimal) {
 	if len(d.Trades) != 0 {
 		d.Trades[0].Quantity = d.Processed
 	}
+}
+
+// ToMessagingDoneMessage converts a core Done object to a messaging DoneMessage
+func (d *Done) ToMessagingDoneMessage() *messaging.DoneMessage {
+	if d == nil || d.Order == nil {
+		// TODO: Log this potential issue? Returning nil might hide problems.
+		return nil
+	}
+	// Use the helper function defined in orderbook.go (or move it here)
+	// For simplicity, assuming convertTrades is accessible or moved.
+	// If convertTrades is in orderbook.go, this approach has a dependency cycle risk.
+	// Consider moving convertTrades to types.go or messaging package if needed.
+
+	msg := &messaging.DoneMessage{
+		OrderID:      d.Order.ID(),
+		ExecutedQty:  d.Processed.String(),
+		RemainingQty: d.Left.String(),
+		Trades:       convertTrades(d.tradesToSlice()), // Assumes convertTrades is available
+		Canceled:     d.Canceled,
+		Activated:    d.Activated,
+		Stored:       d.Stored,
+		Quantity:     d.Quantity.String(), // Original quantity
+		Processed:    d.Processed.String(),
+		Left:         d.Left.String(),
+	}
+	return msg
 }
 
 // Helper function to create trade orders
