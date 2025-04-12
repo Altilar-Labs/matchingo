@@ -289,3 +289,66 @@ func TestToSimple(t *testing.T) {
 		t.Error("Expected simple.IsQuote to be false")
 	}
 }
+
+// TestOrderConstructors_PanicConditions verifies that constructors panic on invalid input.
+func TestOrderConstructors_PanicConditions(t *testing.T) {
+	validID := "test-id"
+	validSide := Buy
+	validQty := fpdecimal.FromInt(1)
+	validPrice := fpdecimal.FromInt(100)
+	validStopPrice := fpdecimal.FromInt(105)
+	zeroQty := fpdecimal.Zero
+	negQty := fpdecimal.FromInt(-1)
+	zeroPrice := fpdecimal.Zero
+	negPrice := fpdecimal.FromInt(-1)
+	invalidTIF := TIF("INVALID_TIF")
+
+	tests := []struct {
+		name        string
+		constructor func()
+		expectPanic error // The error expected in the panic
+	}{
+		// Market Order Panics
+		{"MarketZeroQty", func() { NewMarketOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
+		{"MarketNegQty", func() { NewMarketOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
+		{"MarketQuoteZeroQty", func() { NewMarketQuoteOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
+		{"MarketQuoteNegQty", func() { NewMarketQuoteOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
+
+		// Limit Order Panics
+		{"LimitZeroQty", func() { NewLimitOrder(validID, validSide, zeroQty, validPrice, GTC, "") }, ErrInvalidQuantity},
+		{"LimitNegQty", func() { NewLimitOrder(validID, validSide, negQty, validPrice, GTC, "") }, ErrInvalidQuantity},
+		{"LimitZeroPrice", func() { NewLimitOrder(validID, validSide, validQty, zeroPrice, GTC, "") }, ErrInvalidPrice},
+		{"LimitNegPrice", func() { NewLimitOrder(validID, validSide, validQty, negPrice, GTC, "") }, ErrInvalidPrice},
+		{"LimitInvalidTIF", func() { NewLimitOrder(validID, validSide, validQty, validPrice, invalidTIF, "") }, ErrInvalidTif},
+
+		// Stop-Limit Order Panics
+		{"StopLimitZeroQty", func() { NewStopLimitOrder(validID, validSide, zeroQty, validPrice, validStopPrice, "") }, ErrInvalidQuantity},
+		{"StopLimitNegQty", func() { NewStopLimitOrder(validID, validSide, negQty, validPrice, validStopPrice, "") }, ErrInvalidQuantity},
+		{"StopLimitZeroPrice", func() { NewStopLimitOrder(validID, validSide, validQty, zeroPrice, validStopPrice, "") }, ErrInvalidPrice},
+		{"StopLimitNegPrice", func() { NewStopLimitOrder(validID, validSide, validQty, negPrice, validStopPrice, "") }, ErrInvalidPrice},
+		{"StopLimitZeroStopPrice", func() { NewStopLimitOrder(validID, validSide, validQty, validPrice, zeroPrice, "") }, ErrInvalidPrice},
+		{"StopLimitNegStopPrice", func() { NewStopLimitOrder(validID, validSide, validQty, validPrice, negPrice, "") }, ErrInvalidPrice},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Errorf("Expected constructor to panic, but it did not")
+					return
+				}
+				// Check if the recovered panic value matches the expected error
+				if recoveredErr, ok := r.(error); ok {
+					if recoveredErr != tt.expectPanic {
+						t.Errorf("Expected panic with error '%v', but got '%v'", tt.expectPanic, recoveredErr)
+					}
+				} else {
+					t.Errorf("Expected panic with an error value, but got panic with type %T: %v", r, r)
+				}
+			}()
+			// Execute the constructor that is expected to panic
+			tt.constructor()
+		})
+	}
+}

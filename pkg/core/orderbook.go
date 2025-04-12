@@ -3,11 +3,49 @@ package core
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/erain9/matchingo/pkg/db/queue"
 	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/nikolaydubina/fpdecimal"
 )
+
+// --- Message Sender Factory ---
+
+var (
+	messageSenderFactory func() messaging.MessageSender
+	factoryMu            sync.Mutex
+)
+
+// defaultMessageSenderFactory returns the default Kafka sender.
+func defaultMessageSenderFactory() messaging.MessageSender {
+	return &queue.QueueMessageSender{}
+}
+
+// SetMessageSenderFactory allows overriding the default message sender, primarily for testing.
+// Pass nil to reset to the default Kafka sender.
+func SetMessageSenderFactory(factory func() messaging.MessageSender) {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	if factory == nil {
+		messageSenderFactory = defaultMessageSenderFactory
+	} else {
+		messageSenderFactory = factory
+	}
+}
+
+// getMessageSender returns the currently configured message sender.
+func getMessageSender() messaging.MessageSender {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	// Initialize with default if not set
+	if messageSenderFactory == nil {
+		messageSenderFactory = defaultMessageSenderFactory
+	}
+	return messageSenderFactory()
+}
+
+// --- OrderBook ---
 
 // OrderBook implements standard matching algorithm
 type OrderBook struct {
@@ -222,6 +260,10 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 	// Delete the market order
 	ob.backend.DeleteOrder(marketOrder.ID())
 
+	// Send the DoneMessage to Kafka. This won't block the call
+	// if it returns error.
+	sendToKafka(done)
+
 	return done, nil
 }
 
@@ -330,26 +372,9 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (done *Done, err error
 	// Update the processed and left quantities in the done object
 	done.setLeftQuantity(&remainingQty)
 
-	// Correct the conversion logic for Done to DoneMessage
-	queueSender := &queue.QueueMessageSender{}
-	doneMessage := &messaging.DoneMessage{
-		OrderID:      done.Order.ID(),
-		ExecutedQty:  done.Processed.String(),
-		RemainingQty: done.Left.String(),
-		Trades:       convertTrades(done.tradesToSlice()),
-		Canceled:     done.Canceled,
-		Activated:    done.Activated,
-		Stored:       done.Stored,
-		Quantity:     done.Quantity.String(),
-		Processed:    done.Processed.String(),
-		Left:         done.Left.String(),
-	}
-
 	// Send the DoneMessage to Kafka. This won't block the call
 	// if it returns error.
-	if err := queueSender.SendDoneMessage(doneMessage); err != nil {
-		fmt.Println(err) // TODO: Use logger in orderbook function.
-	}
+	sendToKafka(done)
 
 	return done, nil
 }
@@ -376,6 +401,10 @@ func (ob *OrderBook) processStopOrder(stopOrder *Order) (done *Done, err error) 
 
 	quantity := stopOrder.Quantity()
 	done.setLeftQuantity(&quantity)
+
+	// Send the DoneMessage to Kafka. This won't block the call
+	// if it returns error.
+	sendToKafka(done)
 
 	return done, nil
 }
@@ -488,4 +517,23 @@ func convertTrades(trades []TradeOrder) []messaging.Trade {
 		}
 	}
 	return converted
+}
+
+// sendToKafka sends the execution result using the configured message sender.
+func sendToKafka(done *Done) {
+	// Convert core.Done to messaging.DoneMessage
+	msg := done.ToMessagingDoneMessage() // Method is defined on Done in types.go
+	if msg == nil {
+		// TODO: Use proper logger
+		fmt.Println("Error: Failed to convert Done to MessagingDoneMessage (nil result)")
+		return
+	}
+
+	// Get sender using the factory
+	sender := getMessageSender()
+	err := sender.SendDoneMessage(msg)
+	if err != nil {
+		// TODO: Use a proper logger passed down or configured globally
+		fmt.Printf("Error sending message via configured sender: %v\n", err)
+	}
 }

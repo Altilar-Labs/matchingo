@@ -6,6 +6,8 @@ import (
 
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/nikolaydubina/fpdecimal"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestGRPCOrderBookService(t *testing.T) {
@@ -45,6 +47,41 @@ func TestGRPCOrderBookService(t *testing.T) {
 
 		if resp.CreatedAt == nil {
 			t.Error("Created timestamp should not be nil")
+		}
+	})
+
+	// Test creating a duplicate order book
+	t.Run("CreateOrderBook_Duplicate", func(t *testing.T) {
+		req := &proto.CreateOrderBookRequest{
+			Name:        "test-book", // Already exists from previous test
+			BackendType: proto.BackendType_MEMORY,
+		}
+
+		_, err := service.CreateOrderBook(ctx, req)
+		if err == nil {
+			t.Fatal("Expected an error when creating a duplicate order book, got nil")
+		}
+
+		// Check for gRPC status code
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.AlreadyExists {
+			t.Errorf("Expected gRPC code AlreadyExists, got %v (error: %v)", st.Code(), err)
+		}
+	})
+
+	// Test getting a non-existent order book
+	t.Run("GetOrderBook_NotFound", func(t *testing.T) {
+		req := &proto.GetOrderBookRequest{
+			Name: "non-existent-book",
+		}
+
+		_, err := service.GetOrderBook(ctx, req)
+		if err == nil {
+			t.Fatal("Expected an error when getting a non-existent order book, got nil")
+		}
+
+		// Check for gRPC status code
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.NotFound {
+			t.Errorf("Expected gRPC code NotFound, got %v (error: %v)", st.Code(), err)
 		}
 	})
 
@@ -141,6 +178,52 @@ func TestGRPCOrderBookService(t *testing.T) {
 
 		if resp.Status != proto.OrderStatus_OPEN {
 			t.Errorf("Expected status OPEN, got %s", resp.Status)
+		}
+	})
+
+	// Test creating an order with invalid quantity
+	t.Run("CreateOrder_InvalidQuantity", func(t *testing.T) {
+		req := &proto.CreateOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "invalid-qty-order",
+			Side:          proto.OrderSide_BUY,
+			Quantity:      "not-a-number", // Invalid decimal string
+			Price:         "100.0",
+			OrderType:     proto.OrderType_LIMIT,
+			TimeInForce:   proto.TimeInForce_GTC,
+		}
+
+		_, err := service.CreateOrder(ctx, req)
+		if err == nil {
+			t.Fatal("Expected an error for invalid quantity, got nil")
+		}
+
+		// Check for gRPC status code
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+			t.Errorf("Expected gRPC code InvalidArgument for quantity, got %v (error: %v)", st.Code(), err)
+		}
+	})
+
+	// Test creating an order with invalid price
+	t.Run("CreateOrder_InvalidPrice", func(t *testing.T) {
+		req := &proto.CreateOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "invalid-price-order",
+			Side:          proto.OrderSide_BUY,
+			Quantity:      "1.0",
+			Price:         "not-a-price", // Invalid decimal string
+			OrderType:     proto.OrderType_LIMIT,
+			TimeInForce:   proto.TimeInForce_GTC,
+		}
+
+		_, err := service.CreateOrder(ctx, req)
+		if err == nil {
+			t.Fatal("Expected an error for invalid price, got nil")
+		}
+
+		// Check for gRPC status code
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+			t.Errorf("Expected gRPC code InvalidArgument for price, got %v (error: %v)", st.Code(), err)
 		}
 	})
 
