@@ -554,12 +554,32 @@ func TestIntegrationV2_StopLimit(t *testing.T) {
 	assert.Equal(t, "104.000", stateResp2.Bids[0].Price) // Limit price of the stop order
 	assert.Equal(t, "10.000", stateResp2.Bids[0].TotalQuantity)
 
-	// Verify Kafka messages (trigger sell store + stop activation?)
+	// Verify Kafka messages (trigger sell store + activated stop order store)
 	sentTriggerMsgs := mockSender.GetSentMessages()
-	// TODO: Verify exact messages. Expect trigger sell storage. Maybe stop activation?
-	// For now, check there's at least one message.
-	require.GreaterOrEqual(t, len(sentTriggerMsgs), 1, "Expected messages for trigger sell process")
-	mockSender.ClearSentMessages()
+	require.Len(t, sentTriggerMsgs, 2, "Expected 2 messages: trigger sell store + activated stop store")
+
+	// Find the messages (order might be non-deterministic)
+	var triggerMsg, activatedStopMsg *messaging.DoneMessage
+	for _, msg := range sentTriggerMsgs {
+		if msg.OrderID == triggerSellID {
+			triggerMsg = msg
+		} else if msg.OrderID == stopBuyID {
+			activatedStopMsg = msg
+		}
+	}
+	require.NotNil(t, triggerMsg, "Did not find Kafka message for trigger sell order")
+	require.NotNil(t, activatedStopMsg, "Did not find Kafka message for activated stop order")
+
+	// Verify trigger sell message
+	assert.True(t, triggerMsg.Stored, "Trigger sell message should indicate stored")
+	assert.Equal(t, triggerSellID, triggerMsg.OrderID)
+
+	// Verify activated stop order message
+	assert.True(t, activatedStopMsg.Stored, "Activated stop order message should indicate stored")
+	assert.Equal(t, stopBuyID, activatedStopMsg.OrderID)
+	assert.Equal(t, "10.000", activatedStopMsg.RemainingQty)
+
+	mockSender.ClearSentMessages() // Clear for next step
 
 	// 4. Place another Sell Order to Match the Activated Stop Order (Sell @ 104)
 	fillResp, err := client.CreateOrder(ctx, &proto.CreateOrderRequest{

@@ -6,6 +6,8 @@ import (
 
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/nikolaydubina/fpdecimal"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -224,6 +226,83 @@ func TestGRPCOrderBookService(t *testing.T) {
 		// Check for gRPC status code
 		if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
 			t.Errorf("Expected gRPC code InvalidArgument for price, got %v (error: %v)", st.Code(), err)
+		}
+	})
+
+	// Test creating order with invalid quantity (zero - should be caught by core panic, but gRPC might return InvalidArgument)
+	t.Run("CreateOrder_ZeroQuantity", func(t *testing.T) {
+		// This might ideally be InvalidArgument, but core panics. Test for robustness.
+		req := &proto.CreateOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "zero-qty-order",
+			Side:          proto.OrderSide_BUY,
+			Quantity:      "0.0", // Invalid
+			Price:         "100.0",
+			OrderType:     proto.OrderType_LIMIT,
+		}
+		_, err := service.CreateOrder(ctx, req)
+		assert.Error(t, err, "Expected an error for zero quantity")
+		// We might get Internal if the panic isn't caught, or InvalidArgument if parsing fails first
+		if st, ok := status.FromError(err); ok {
+			assert.Condition(t, func() bool { return st.Code() == codes.InvalidArgument || st.Code() == codes.Internal }, "Expected InvalidArgument or Internal, got %v", st.Code())
+		} else {
+			t.Errorf("Expected gRPC status error, got %T: %v", err, err)
+		}
+	})
+
+	// Test creating order with duplicate ID
+	t.Run("CreateOrder_DuplicateID", func(t *testing.T) {
+		// First, ensure an order exists
+		firstReq := &proto.CreateOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "duplicate-id-test",
+			Side:          proto.OrderSide_BUY,
+			Quantity:      "1.0",
+			Price:         "101.0",
+			OrderType:     proto.OrderType_LIMIT,
+		}
+		_, err := service.CreateOrder(ctx, firstReq)
+		require.NoError(t, err, "Setup for duplicate ID test failed")
+
+		// Attempt to create another with the same ID
+		dupReq := &proto.CreateOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "duplicate-id-test", // Same ID
+			Side:          proto.OrderSide_SELL,
+			Quantity:      "1.0",
+			Price:         "102.0",
+			OrderType:     proto.OrderType_LIMIT,
+		}
+		_, err = service.CreateOrder(ctx, dupReq)
+		require.Error(t, err, "Expected an error for duplicate order ID")
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.AlreadyExists {
+			t.Errorf("Expected gRPC code AlreadyExists, got %v (error: %v)", st.Code(), err)
+		}
+	})
+
+	// Test GetOrder for non-existent order
+	t.Run("GetOrder_NotFound", func(t *testing.T) {
+		req := &proto.GetOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "non-existent-order-id",
+		}
+		_, err := service.GetOrder(ctx, req)
+		require.Error(t, err, "Expected an error getting non-existent order")
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.NotFound {
+			t.Errorf("Expected gRPC code NotFound, got %v (error: %v)", st.Code(), err)
+		}
+	})
+
+	// Test CancelOrder for non-existent order
+	t.Run("CancelOrder_NotFound", func(t *testing.T) {
+		req := &proto.CancelOrderRequest{
+			OrderBookName: "test-book",
+			OrderId:       "non-existent-order-id-cancel",
+		}
+		_, err := service.CancelOrder(ctx, req)
+		require.Error(t, err, "Expected an error canceling non-existent order")
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.NotFound {
+			t.Errorf("Expected gRPC code NotFound, got %v (error: %v)", st.Code(), err)
 		}
 	})
 
