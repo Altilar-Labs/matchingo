@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  redis-test:
+    image: redis:7-alpine
+    container_name: matchingo-redis-test
+    ports:
+      - "6380:6379" # Map to different host port (6380) to avoid conflict with local Redis
+    command: redis-server --save "" --appendonly no # Disable persistence for testing
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30 

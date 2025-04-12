@@ -20,200 +20,116 @@ Example:
 
 Follow these steps to test the Matchingo order book system:
 
-### 1. Start the Server
+### Prerequisites
 
-First, make sure you have built the project:
+*   Go 1.21+
+*   Make
+*   Docker and Docker Compose (for Redis backend integration tests)
+
+### 1. Build
+
+First, ensure the project is built:
 
 ```bash
 make clean && make build
 ```
 
-Then start the server:
+### 2. Start the Server
+
+For manual testing or running unit/integration tests that don't manage dependencies:
 
 ```bash
 ./bin/orderbook-server
 ```
 
-You should see output indicating the server has started successfully:
+### 3. Running Tests
 
-```
-INFO Starting gRPC server on port 50051...
-```
+*   **Run all unit and basic integration tests (Memory Backend):**
+    ```bash
+    make test
+    # or
+    go test -v -race -coverprofile=coverage.out ./...
+    ```
 
-### 2. Create an Order Book
+*   **Run V2 Integration Tests (Memory Backend, incl. Kafka message checks):**
+    This runs the tests defined in `pkg/server/integration_v2_test.go`.
+    ```bash
+    go test -v -race ./pkg/server/... -run IntegrationV2
+    ```
 
-Before you can create any orders, you must first create an order book:
+*   **Run Redis Integration Tests (Requires Docker):**
+    This target automatically starts Redis in Docker (via `docker-compose.yml` on host port 6380), runs the specific Redis tests in `pkg/server/redis_integration_test.go`, and stops Redis.
+    ```bash
+    make test-redis
+    # Manual equivalent:
+    # make test-deps-up
+    # go test -v -race ./pkg/server/... -run RedisIntegration
+    # make test-deps-down
+    ```
 
-```bash
-./bin/orderbook-client create-book default --backend=memory
-```
+### 4. Manual CLI Testing Steps (Memory Backend)
 
-Expected output:
+*Ensure the server is running (`./bin/orderbook-server`)*
 
-```
-INFO Created order book "default"
-```
+1.  **Create Order Book:**
+    ```bash
+    ./bin/orderbook-client create-book default --backend=memory
+    ```
 
-### 3. Create Orders
+2.  **Create Orders:**
+    ```bash
+    # Sell Limit
+    ./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
+    # Buy Limit
+    ./bin/orderbook-client create-order default BUY LIMIT 1.0 95.0 buy1
+    ```
 
-Now you can create orders in the order book:
+3.  **View State:**
+    ```bash
+    ./bin/orderbook-client get-state default
+    ```
 
-```bash
-# Create a sell limit order
-./bin/orderbook-client create-order default SELL LIMIT 0.5 100.0 sell1
+4.  **Create Matching Market Order:**
+    ```bash
+    ./bin/orderbook-client create-order default BUY MARKET 0.3 0.0 buy2
+    ```
 
-# Create a buy limit order
-./bin/orderbook-client create-order default BUY LIMIT 1.0 95.0 buy1
-```
+5.  **View State Again:**
+    ```bash
+    ./bin/orderbook-client get-state default
+    ```
 
-Expected output for the first command:
+6.  **Cancel Order:**
+    ```bash
+    ./bin/orderbook-client cancel-order default buy1
+    ```
 
-```
-INFO Created order sell1 in order book default
-```
+7.  **List Books:**
+    ```bash
+    ./bin/orderbook-client list-books
+    ```
 
-### 4. View Order Book State
+### 5. Testing with Redis (Manual)
 
-Check the current state of the order book:
-
-```bash
-./bin/orderbook-client get-state default
-```
-
-Expected output:
-
-```
-+----------------- Order Book: default -----------------+
-|                BIDS                |       ASKS       |
-+--------------------+---------------+------------------+
-| Price    | Quantity | Orders | Price    | Quantity | Orders |
-+----------+----------+--------+----------+----------+--------+
-| 95.00    | 1.0000   | 1      | 100.00   | 0.5000   | 1      |
-+----------+----------+--------+----------+----------+--------+
-```
-
-### 5. Create a Market Order
-
-Create a market order that will match against existing limit orders:
-
-```bash
-./bin/orderbook-client create-order default BUY MARKET 0.3 0.0 buy2
-```
-
-Expected output:
-
-```
-INFO Created order buy2 in order book default
-INFO Order matched! Taker: buy2, Maker: sell1, Quantity: 0.3, Price: 100.0
-```
-
-### 6. Check Order Book State Again
-
-Check how the order book state has changed:
-
-```bash
-./bin/orderbook-client get-state default
-```
-
-Expected output:
-
-```
-+----------------- Order Book: default -----------------+
-|                BIDS                |       ASKS       |
-+--------------------+---------------+------------------+
-| Price    | Quantity | Orders | Price    | Quantity | Orders |
-+----------+----------+--------+----------+----------+--------+
-| 95.00    | 1.0000   | 1      | 100.00   | 0.2000   | 1      |
-+----------+----------+--------+----------+----------+--------+
-```
-
-Notice the ASKS quantity has been reduced by the matched amount (0.3).
-
-### 7. Create a Stop Limit Order
-
-Create a stop limit order that will become active when the stop price is reached:
-
-```bash
-./bin/orderbook-client create-order default BUY STOP_LIMIT 2.0 102.0 buy3 --stop-price=101.0
-```
-
-Expected output:
-
-```
-INFO Created order buy3 in order book default
-```
-
-### 8. Cancel an Order
-
-Cancel an existing order:
-
-```bash
-./bin/orderbook-client cancel-order default buy1
-```
-
-Expected output:
-
-```
-INFO Cancelled order buy1 in order book default
-```
-
-### 9. List All Order Books
-
-List all available order books:
-
-```bash
-./bin/orderbook-client list-books
-```
-
-Expected output:
-
-```
-INFO Order books: [default]
-```
-
-### 10. Create Another Order Book
-
-Create another order book with a different name:
-
-```bash
-./bin/orderbook-client create-book BTCUSD --backend=memory
-```
-
-Expected output:
-
-```
-INFO Created order book "BTCUSD"
-```
-
-### 11. Test with Redis Backend
-
-If you have Redis running, you can test with the Redis backend:
-
-```bash
-# Create an order book with Redis backend
-./bin/orderbook-client create-book ETHUSD --backend=redis
-
-# Add orders to the Redis-backed order book
-./bin/orderbook-client create-order ETHUSD BUY LIMIT 2.0 1800.0 eth_buy1
-./bin/orderbook-client create-order ETHUSD SELL LIMIT 1.5 1850.0 eth_sell1
-
-# Check the state
-./bin/orderbook-client get-state ETHUSD
-```
-
-### 12. Test Different Time-in-Force Options
-
-Test immediate-or-cancel (IOC) order:
-
-```bash
-./bin/orderbook-client create-order default BUY LIMIT 0.1 90.0 ioc_order --tif=IOC
-```
-
-Test fill-or-kill (FOK) order:
-
-```bash
-./bin/orderbook-client create-order default SELL LIMIT 2.0 105.0 fok_order --tif=FOK
-```
+1.  Start the test Redis container:
+    ```bash
+    make test-deps-up
+    ```
+2.  Start the server (it will connect to default localhost:50051, ensure no conflicts)
+    ```bash
+    ./bin/orderbook-server
+    ```
+3.  Use the client. Note: `create-book` CLI doesn't currently support passing Redis options, so it relies on server defaults or prior creation via integration tests.
+    ```bash
+    # Example (assuming server defaults to Redis or book exists)
+    ./bin/orderbook-client create-book redis-book # Might need modification
+    ./bin/orderbook-client create-order redis-book BUY LIMIT 1.0 100.0 rbuy1
+    ./bin/orderbook-client get-state redis-book
+    ```
+4.  Stop the test Redis container:
+    ```bash
+    make test-deps-down
+    ```
 
 ## Troubleshooting
 

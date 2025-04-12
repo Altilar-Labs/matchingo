@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: test imports fix clean build proto build-all run-server run-client
+.PHONY: test imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down test-integration test-redis
 
 test: imports fix
 	go test ./pkg/...
@@ -64,3 +64,39 @@ run-server:
 run-client:
 	@echo "Running orderbook client..."
 	@./bin/orderbook-client --cmd=list
+
+# Testing Dependencies Management
+test-deps-up:
+	@echo "Starting test dependencies (Redis)..."
+	docker compose -f docker-compose.yml up -d --wait redis-test
+	@echo "Test dependencies started."
+
+test-deps-down:
+	@echo "Stopping test dependencies (Redis)..."
+	docker compose -f docker-compose.yml down
+	@echo "Test dependencies stopped."
+
+# Add dependency management to main test target
+test:
+	@echo "Running tests..."
+	go test -v -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+test-integration:
+	@echo "Starting dependencies for integration tests..."
+	$(MAKE) test-deps-up
+	@echo "Running integration tests..."
+	go test -v -race ./pkg/server/... -run IntegrationV2 # Run only integration tests
+	@echo "Stopping dependencies..."
+	$(MAKE) test-deps-down
+
+test-redis:
+	@echo "Starting dependencies for Redis tests..."
+	$(MAKE) test-deps-up
+	@echo "Running Redis integration tests..."
+	go test -v -race ./pkg/server/... -run RedisIntegration # Run only Redis integration tests
+	@echo "Stopping dependencies..."
+	$(MAKE) test-deps-down
+
+# Default target
+default: build
