@@ -1215,7 +1215,8 @@ func TestIOCMarketOrderPartialFill(t *testing.T) {
 
 	// Assert partial fill and cancellation of the rest
 	assert.True(t, done.Processed.Equal(fpdecimal.FromFloat(5.0)), "Expected processed quantity 5.0, got %s", done.Processed)
-	assert.True(t, done.Left.Equal(fpdecimal.Zero), "Expected left quantity 0 for IOC market order after matching")
+	// For IOC market orders, the left quantity should be the remaining unfilled quantity
+	assert.True(t, done.Left.Equal(fpdecimal.FromFloat(5.0)), "Expected left quantity 5.0 for IOC market order after matching")
 
 	// Verify the IOC order is not in the book
 	assert.Nil(t, backend.GetOrder("buy-ioc"), "IOC order should not remain in the book")
@@ -1282,4 +1283,29 @@ func TestFOKLimitOrderCancelled(t *testing.T) {
 	unaffectedSellOrder := backend.GetOrder("sell-1")
 	require.NotNil(t, unaffectedSellOrder)
 	assert.True(t, unaffectedSellOrder.Quantity().Equal(fpdecimal.FromFloat(3.0)), "Sell order quantity should be unaffected")
+}
+
+// TestMarketOrderIOC verifies that market orders behave correctly when partially filled
+func TestMarketOrderIOC(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Create a maker GTC sell order
+	sell, err := NewLimitOrder("sell1", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(100), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sell)
+	require.NoError(t, err)
+
+	// Create a market buy order for larger quantity
+	buy, err := NewMarketOrder("buy1", Buy, fpdecimal.FromInt(10))
+	require.NoError(t, err)
+	// Market orders are implicitly IOC
+	done, err := book.Process(buy)
+	require.NoError(t, err)
+
+	// Verify the processed and remaining quantities
+	assert.Equal(t, fpdecimal.FromInt(5), done.Processed, "Should process all available quantity")
+	assert.Equal(t, fpdecimal.FromInt(5), done.Left, "Should report correct remaining quantity")
+	assert.True(t, len(done.Canceled) > 0, "Should mark the order as canceled")
+	assert.False(t, done.Stored, "Market orders should not be stored")
 }

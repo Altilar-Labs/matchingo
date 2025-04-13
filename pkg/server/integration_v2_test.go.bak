@@ -256,7 +256,7 @@ func TestIntegrationV2_LimitOrderMatch(t *testing.T) {
 		TimeInForce:   proto.TimeInForce_GTC,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, buyResp.Status, buyResp.Status) // Buy order fully filled
+	assert.Equal(t, proto.OrderStatus_FILLED, buyResp.Status) // Buy order fully filled
 
 	// 4. Verify Order Book State (Sell order should be partially filled)
 	stateResp, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
@@ -328,7 +328,7 @@ func TestIntegrationV2_MarketOrderMatch(t *testing.T) {
 	require.NoError(t, err)
 	// Market orders are immediately filled or killed, not left open.
 	// Assuming FILLED status is returned even if partially filled against liquidity.
-	assert.Equal(t, buyResp.Status, buyResp.Status)
+	assert.Equal(t, proto.OrderStatus_FILLED, buyResp.Status)
 
 	// 4. Verify Order Book State (Sell order should be partially filled)
 	stateResp, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
@@ -573,7 +573,7 @@ func TestIntegrationV2_IOC_FOK(t *testing.T) {
 			TimeInForce:   proto.TimeInForce_FOK,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, buyResp.Status, buyResp.Status)
+		assert.Equal(t, proto.OrderStatus_FILLED, buyResp.Status)
 
 		// Verify book state (Asks should be empty)
 		stateResp, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
@@ -924,7 +924,7 @@ func TestIntegrationV2_Redis_LimitOrderMatch(t *testing.T) {
 			TimeInForce:   proto.TimeInForce_GTC,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, buyResp.Status, buyResp.Status) // Buy order fully filled
+		assert.Equal(t, proto.OrderStatus_FILLED, buyResp.Status) // Buy order fully filled
 
 		// Small delay to ensure order is processed
 		time.Sleep(200 * time.Millisecond)
