@@ -9,7 +9,10 @@ import (
 	"github.com/erain9/matchingo/pkg/core"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
+
+const benchSize = 10000
 
 // skipIfNoRedis will skip the test if Redis is not available
 func skipIfNoRedis(t *testing.B) *redis.Client {
@@ -31,6 +34,103 @@ func skipIfNoRedis(t *testing.B) *redis.Client {
 	return client
 }
 
+func benchmarkAppendToSide(b *testing.B, backend *RedisBackend, side core.Side) {
+	orders := make([]*core.Order, b.N)
+	for i := 0; i < b.N; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		backend.AppendToSide(side, orders[i])
+	}
+}
+
+func BenchmarkAppendToSide_Bids(b *testing.B) {
+	client := skipIfNoRedis(b)
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	// Flush the database to start fresh
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client.FlushDB(ctx)
+
+	backend := NewRedisBackend(client, "bench:bids:")
+	benchmarkAppendToSide(b, backend, core.Buy)
+}
+
+func BenchmarkAppendToSide_Asks(b *testing.B) {
+	client := skipIfNoRedis(b)
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	// Flush the database to start fresh
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client.FlushDB(ctx)
+
+	backend := NewRedisBackend(client, "bench:asks:")
+	benchmarkAppendToSide(b, backend, core.Sell)
+}
+
+func benchmarkRemoveFromSide(b *testing.B, backend *RedisBackend, side core.Side) {
+	orders := make([]*core.Order, benchSize)
+	for i := 0; i < benchSize; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+		backend.AppendToSide(side, order)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		backend.RemoveFromSide(side, orders[i%benchSize])
+	}
+}
+
+func BenchmarkRemoveFromSide_Bids(b *testing.B) {
+	client := skipIfNoRedis(b)
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	// Flush the database to start fresh
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client.FlushDB(ctx)
+
+	backend := NewRedisBackend(client, "bench:bids:")
+	benchmarkRemoveFromSide(b, backend, core.Buy)
+}
+
+func BenchmarkRemoveFromSide_Asks(b *testing.B) {
+	client := skipIfNoRedis(b)
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	// Flush the database to start fresh
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client.FlushDB(ctx)
+
+	backend := NewRedisBackend(client, "bench:asks:")
+	benchmarkRemoveFromSide(b, backend, core.Sell)
+}
+
 func BenchmarkRedisBackend_StoreOrder(b *testing.B) {
 	client := skipIfNoRedis(b)
 	if client == nil {
@@ -43,15 +143,20 @@ func BenchmarkRedisBackend_StoreOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "benchmark")
+	backend := NewRedisBackend(client, "bench:store:")
+	orders := make([]*core.Order, b.N)
+	for i := 0; i < b.N; i++ {
+		orderID := fmt.Sprintf("order-%d", i)
+		price := fpdecimal.FromFloat(float64(100 + i))
+		quantity := fpdecimal.FromFloat(10.0)
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		orderID := fmt.Sprintf("order-%d", i)
-		price := fpdecimal.FromFloat(100.0)
-		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_ = backend.StoreOrder(order)
+		_ = backend.StoreOrder(orders[i])
 	}
 }
 
@@ -67,29 +172,25 @@ func BenchmarkRedisBackend_GetOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "benchmark")
-
-	// Store some orders first
-	numOrders := 100 // Using fewer orders for Redis to avoid timeout
-	orderIDs := make([]string, numOrders)
-
-	for i := 0; i < numOrders; i++ {
+	backend := NewRedisBackend(client, "bench:get:")
+	orderIDs := make([]string, benchSize)
+	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
 		orderIDs[i] = orderID
-		price := fpdecimal.FromFloat(100.0)
+		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
 		_ = backend.StoreOrder(order)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		index := i % numOrders
-		_ = backend.GetOrder(orderIDs[index])
+		_ = backend.GetOrder(orderIDs[i%benchSize])
 	}
 }
 
-func BenchmarkRedisBackend_AppendToSide(b *testing.B) {
+func BenchmarkRedisBackend_UpdateOrder(b *testing.B) {
 	client := skipIfNoRedis(b)
 	if client == nil {
 		return
@@ -101,17 +202,53 @@ func BenchmarkRedisBackend_AppendToSide(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "benchmark")
+	backend := NewRedisBackend(client, "bench:update:")
+	orders := make([]*core.Order, benchSize)
+	for i := 0; i < benchSize; i++ {
+		orderID := fmt.Sprintf("order-%d", i)
+		price := fpdecimal.FromFloat(float64(100 + i))
+		quantity := fpdecimal.FromFloat(10.0)
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+		_ = backend.StoreOrder(order)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		order := orders[i%benchSize]
+		order.SetQuantity(order.Quantity().Add(fpdecimal.FromFloat(0.1)))
+		_ = backend.UpdateOrder(order)
+	}
+}
+
+func BenchmarkRedisBackend_DeleteOrder(b *testing.B) {
+	client := skipIfNoRedis(b)
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	// Flush the database to start fresh
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client.FlushDB(ctx)
+
+	backend := NewRedisBackend(client, "bench:delete:")
+	orders := make([]*core.Order, benchSize)
+	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
-		// Use different prices to test the sorting performance
-		price := fpdecimal.FromFloat(float64(100 + (i % 100)))
+		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
 		_ = backend.StoreOrder(order)
-		backend.AppendToSide(core.Buy, order)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		backend.DeleteOrder(orders[i%benchSize].ID())
 	}
 }
 
@@ -127,29 +264,32 @@ func BenchmarkOrderBook_Process_Redis(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "benchmark")
+	backend := NewRedisBackend(client, "bench:process:")
 	book := core.NewOrderBook(backend)
 
-	// Create sell orders to match against (fewer for Redis)
-	for i := 0; i < 20; i++ {
+	// Create sell orders to match against
+	for i := 0; i < 100; i++ {
 		orderID := fmt.Sprintf("sell-order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "")
-		_, _ = book.Process(order)
+		order, err := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("buy-order-%d", i)
-		price := fpdecimal.FromFloat(100.0) // Set price to match lowest sell order
 		quantity := fpdecimal.FromFloat(1.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_, _ = book.Process(order)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }
 
-func BenchmarkOrderBook_SmallOrderBook_Redis(b *testing.B) {
+func BenchmarkOrderBook_LargeOrderBook_Redis(b *testing.B) {
 	client := skipIfNoRedis(b)
 	if client == nil {
 		return
@@ -161,24 +301,28 @@ func BenchmarkOrderBook_SmallOrderBook_Redis(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "benchmark")
+	backend := NewRedisBackend(client, "bench:large:")
 	book := core.NewOrderBook(backend)
 
-	// Create a smaller order book with fewer price levels (for Redis)
-	for i := 0; i < 20; i++ { // Reduced from 50 to 20 for faster setup
+	// Create a large order book with many price levels
+	for i := 0; i < 200; i++ {
 		// Add buy orders
 		buyOrderID := fmt.Sprintf("buy-order-%d", i)
-		buyPrice := fpdecimal.FromFloat(float64(90 - (i % 10)))
+		buyPrice := fpdecimal.FromFloat(float64(90 - (i % 90)))
 		buyQuantity := fpdecimal.FromFloat(10.0)
-		buyOrder := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "")
-		_, _ = book.Process(buyOrder)
+		buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(buyOrder)
+		require.NoError(b, err)
 
 		// Add sell orders
 		sellOrderID := fmt.Sprintf("sell-order-%d", i)
-		sellPrice := fpdecimal.FromFloat(float64(110 + (i % 10)))
+		sellPrice := fpdecimal.FromFloat(float64(110 + (i % 90)))
 		sellQuantity := fpdecimal.FromFloat(10.0)
-		sellOrder := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "")
-		_, _ = book.Process(sellOrder)
+		sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(sellOrder)
+		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
@@ -186,14 +330,9 @@ func BenchmarkOrderBook_SmallOrderBook_Redis(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("market-order-%d", i)
 		quantity := fpdecimal.FromFloat(5.0)
-
-		// Alternate between buy and sell market orders
-		side := core.Buy
-		if i%2 == 0 {
-			side = core.Sell
-		}
-
-		order := core.NewMarketOrder(orderID, side, quantity)
-		_, _ = book.Process(order)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }

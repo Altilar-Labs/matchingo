@@ -389,8 +389,11 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 			ob.backend.DeleteOrder(limitOrder.ID())
 			done.Left = executionQty
 			done.Processed = fpdecimal.Zero
+			done.Stored = false
 			// Add the taker to trades with zero quantity
 			done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
+			// Send Kafka message for canceled FOK order
+			sendToKafka(done)
 			return done, nil
 		}
 		// If we can fill completely, proceed with normal execution below
@@ -457,6 +460,13 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 			// Add the taker to trades with processed quantity
 			done.appendOrder(limitOrder, processedQty, limitOrder.Price())
 
+			// Update last trade price for stop orders if a trade occurred
+			if processedQty.GreaterThan(fpdecimal.Zero) {
+				ob.lastTradePrice = limitOrder.Price()
+				ob.checkStopOrderTrigger(ob.lastTradePrice)
+				sendToKafka(done)
+			}
+
 			return done, nil
 		}
 		// For GTC or other TIFs that allow resting orders:
@@ -464,17 +474,13 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 		ob.backend.UpdateOrder(limitOrder) // Update the order with the new quantity
 		ob.backend.AppendToSide(limitOrder.Side(), limitOrder)
 		// Append to done to indicate the order is now resting on the book with remaining qty
-		done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
+		done.appendOrder(limitOrder, processedQty, limitOrder.Price())
 		done.Stored = true
 	} else {
 		// Order fully filled
 		ob.backend.DeleteOrder(limitOrder.ID())
 		done.Stored = false
-	}
-
-	// Append the taker order to trades if it was partially or fully filled
-	if processedQty.GreaterThan(fpdecimal.Zero) {
-		// Use the original executionQty for the taker trade record, but price is limit price
+		// Ensure taker order is properly recorded with full quantity
 		done.appendOrder(limitOrder, processedQty, limitOrder.Price())
 	}
 
@@ -512,42 +518,100 @@ func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
 	}
 
 	// Check if stop price is triggered
+	isTriggerConditionMet := false
 	if !ob.lastTradePrice.Equal(fpdecimal.Zero) {
 		if (stopOrder.Side() == Buy && ob.lastTradePrice.GreaterThanOrEqual(stopOrder.StopPrice())) ||
 			(stopOrder.Side() == Sell && ob.lastTradePrice.LessThanOrEqual(stopOrder.StopPrice())) {
-
-			// Remove from stop book before triggering
-			ob.backend.RemoveFromStopBook(stopOrder)
-
-			// Convert to limit order
-			limitOrder, err := NewLimitOrder(
-				stopOrder.ID(),
-				stopOrder.Side(),
-				stopOrder.Quantity(),
-				stopOrder.Price(),
-				stopOrder.TIF(),
-				stopOrder.OCO(),
-			)
-			if err != nil {
-				ob.backend.DeleteOrder(stopOrder.ID())
-				return nil, err
-			}
-
-			// Process as limit order
-			return ob.processLimitOrder(limitOrder)
+			isTriggerConditionMet = true
 		}
+	}
+
+	if isTriggerConditionMet {
+		// Convert to limit order
+		limitOrder, err := NewLimitOrder(
+			stopOrder.ID(),
+			stopOrder.Side(),
+			stopOrder.Quantity(),
+			stopOrder.Price(),
+			stopOrder.TIF(),
+			stopOrder.OCO(),
+		)
+		if err != nil {
+			ob.backend.DeleteOrder(stopOrder.ID())
+			return nil, err
+		}
+
+		// Remove from stop book before triggering (it could be not there yet, but that's fine)
+		ob.backend.RemoveFromStopBook(stopOrder)
+
+		// Update order record to reflect conversion from stop to limit
+		err = ob.backend.StoreOrder(limitOrder)
+		if err != nil {
+			return nil, err
+		}
+
+		// Store that the order was activated
+		done.appendActivated(stopOrder)
+
+		// Process as limit order
+		limitDone, err := ob.processLimitOrder(limitOrder)
+		if err != nil {
+			return done, err
+		}
+
+		// Copy relevant fields from limitDone to our done
+		done.Trades = limitDone.Trades
+		done.Processed = limitDone.Processed
+		done.Left = limitDone.Left
+		done.Stored = limitDone.Stored
+
+		// Send done message to Kafka
+		sendToKafka(done)
+		return done, nil
 	}
 
 	// Add to stop book if not triggered
 	ob.backend.AppendToStopBook(stopOrder)
-	done.appendOrder(stopOrder, stopOrder.Quantity(), stopOrder.Price())
+	done.Stored = true
+
+	// Record that we stored the order but didn't execute any quantity
+	done.appendOrder(stopOrder, fpdecimal.Zero, stopOrder.Price())
+
+	// Send the message about storing the stop order
+	sendToKafka(done)
 	return done, nil
 }
 
 // Helper function to check if a stop order should be triggered
 func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
+	// Update the last trade price
 	ob.lastTradePrice = lastPrice
 	stopBook := ob.backend.GetStopBook()
+
+	// First try the BuyOrders/SellOrders interface
+	if stopBookInterface, ok := stopBook.(interface {
+		BuyOrders() []*Order
+		SellOrders() []*Order
+	}); ok {
+		// Process all buy stop orders
+		buyStops := stopBookInterface.BuyOrders()
+		for _, order := range buyStops {
+			if lastPrice.GreaterThanOrEqual(order.StopPrice()) {
+				ob.triggerStopOrder(order)
+			}
+		}
+
+		// Process all sell stop orders
+		sellStops := stopBookInterface.SellOrders()
+		for _, order := range sellStops {
+			if lastPrice.LessThanOrEqual(order.StopPrice()) {
+				ob.triggerStopOrder(order)
+			}
+		}
+		return // Successfully processed using the side-based interface
+	}
+
+	// Fallback to using the price-based interface
 	if stopBookInterface, ok := stopBook.(interface {
 		Orders(price fpdecimal.Decimal) []*Order
 		Prices() []fpdecimal.Decimal
@@ -564,42 +628,61 @@ func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
 				}
 
 				if triggered {
-					// Remove from stop book ONLY
-					ob.backend.RemoveFromStopBook(order)
-					// Do NOT delete the order record here; let the limit order processing handle it.
-
-					// Convert to limit order and process
-					limitOrder, err := NewLimitOrder(
-						order.ID(),
-						order.Side(),
-						order.Quantity(),
-						order.Price(),
-						order.TIF(),
-						order.OCO(),
-					)
-					if err != nil {
-						// TODO: Log error
-						continue
-					}
-
-					// Update the order record in the backend to reflect the new limit order state.
-					// Assuming StoreOrder acts like an upsert or replaces the old stop order entry.
-					err = ob.backend.StoreOrder(limitOrder)
-					if err != nil {
-						// TODO: Log error
-						continue
-					}
-
-					// Process the newly activated limit order
-					// processLimitOrder should handle potential re-storage checks if needed.
-					_, processErr := ob.Process(limitOrder)
-					if processErr != nil {
-						// TODO: Log error
-					}
+					ob.triggerStopOrder(order)
 				}
 			}
 		}
 	}
+}
+
+// Helper to trigger a stop order
+func (ob *OrderBook) triggerStopOrder(order *Order) {
+	// Remove the stop order from the stop book
+	ob.backend.RemoveFromStopBook(order)
+
+	// Convert to a limit order
+	limitOrder, err := NewLimitOrder(
+		order.ID(),
+		order.Side(),
+		order.Quantity(),
+		order.Price(),
+		order.TIF(),
+		order.OCO(),
+	)
+	if err != nil {
+		// Log error but continue processing
+		fmt.Printf("Error converting stop order to limit order: %v\n", err)
+		return
+	}
+
+	// Update the order record in the backend
+	err = ob.backend.StoreOrder(limitOrder)
+	if err != nil {
+		fmt.Printf("Error storing converted limit order: %v\n", err)
+		return
+	}
+
+	// Create a done object to track the activation
+	done := newDone(order)
+	done.appendActivated(order)
+
+	// Process the newly activated limit order
+	limitDone, processErr := ob.processLimitOrder(limitOrder)
+	if processErr != nil {
+		fmt.Printf("Error processing activated limit order: %v\n", processErr)
+		// Still send activation message to Kafka
+		sendToKafka(done)
+		return
+	}
+
+	// Merge the results from the limit order processing
+	done.Trades = limitDone.Trades
+	done.Left = limitDone.Left
+	done.Processed = limitDone.Processed
+	done.Stored = limitDone.Stored
+
+	// Send the complete message to Kafka
+	sendToKafka(done)
 }
 
 func (ob *OrderBook) checkOCO(order *Order, done *Done) bool {
@@ -700,11 +783,27 @@ func convertTrades(trades []TradeOrder) []messaging.Trade {
 		if trade.Role == TAKER {
 			role = "TAKER"
 		}
+
+		// Format decimal values consistently with 3 decimal places
+		formatDecimal := func(d fpdecimal.Decimal) string {
+			// Ensure decimal is formatted with 3 decimal places
+			val := d.String()
+			parts := strings.Split(val, ".")
+			if len(parts) == 1 {
+				// No decimal part, add .000
+				return val + ".000"
+			} else if len(parts[1]) < 3 {
+				// Fewer than 3 decimal places, add zeroes
+				return val + strings.Repeat("0", 3-len(parts[1]))
+			}
+			return val
+		}
+
 		converted[i] = messaging.Trade{
 			OrderID:  trade.OrderID,
 			Role:     role,
-			Price:    trade.Price.String(),
-			Quantity: trade.Quantity.String(),
+			Price:    formatDecimal(trade.Price),
+			Quantity: formatDecimal(trade.Quantity),
 			IsQuote:  trade.IsQuote,
 		}
 	}

@@ -84,6 +84,66 @@ type StopBook struct {
 	sell *OrderSide
 }
 
+// Orders returns all orders at a given price level for both buy and sell sides
+func (sb *StopBook) Orders(price fpdecimal.Decimal) []*core.Order {
+	buyOrders := sb.buy.Orders(price)
+	sellOrders := sb.sell.Orders(price)
+	allOrders := make([]*core.Order, 0, len(buyOrders)+len(sellOrders))
+	allOrders = append(allOrders, buyOrders...)
+	allOrders = append(allOrders, sellOrders...)
+	return allOrders
+}
+
+// Prices returns all unique prices from both buy and sell sides
+func (sb *StopBook) Prices() []fpdecimal.Decimal {
+	buyPrices := sb.buy.Prices()
+	sellPrices := sb.sell.Prices()
+
+	// Create a map to deduplicate prices
+	priceMap := make(map[string]fpdecimal.Decimal)
+	for _, price := range buyPrices {
+		priceMap[price.String()] = price
+	}
+	for _, price := range sellPrices {
+		priceMap[price.String()] = price
+	}
+
+	// Convert map back to slice
+	prices := make([]fpdecimal.Decimal, 0, len(priceMap))
+	for _, price := range priceMap {
+		prices = append(prices, price)
+	}
+	return prices
+}
+
+// BuyOrders returns all buy stop orders
+func (sb *StopBook) BuyOrders() []*core.Order {
+	var allOrders []*core.Order
+
+	// Iterate through all price levels
+	prices := sb.buy.Prices()
+	for _, price := range prices {
+		orders := sb.buy.Orders(price)
+		allOrders = append(allOrders, orders...)
+	}
+
+	return allOrders
+}
+
+// SellOrders returns all sell stop orders
+func (sb *StopBook) SellOrders() []*core.Order {
+	var allOrders []*core.Order
+
+	// Iterate through all price levels
+	prices := sb.sell.Prices()
+	for _, price := range prices {
+		orders := sb.sell.Orders(price)
+		allOrders = append(allOrders, orders...)
+	}
+
+	return allOrders
+}
+
 // String implements fmt.Stringer interface
 func (sb *StopBook) String() string {
 	builder := strings.Builder{}
@@ -182,8 +242,8 @@ func (b *MemoryBackend) DeleteOrder(orderID string) {
 
 	// Clean up OCO references
 	if oco := order.OCO(); oco != "" {
-		delete(b.ocoMapping, oco)
 		delete(b.ocoMapping, orderID)
+		delete(b.ocoMapping, oco)
 	}
 
 	delete(b.orders, orderID)
@@ -299,9 +359,14 @@ func (b *MemoryBackend) RemoveFromSide(side core.Side, order *core.Order) bool {
 		return false
 	}
 
+	// Check if the order exists at this price level
+	if _, exists := queue.orders[order.ID()]; !exists {
+		return false
+	}
+
 	delete(queue.orders, order.ID())
 
-	// If queue is empty, remove it
+	// If queue is empty, remove it and update linked list
 	if len(queue.orders) == 0 {
 		delete(orderSide.orderID, priceStr)
 
@@ -455,21 +520,13 @@ func (b *MemoryBackend) RemoveFromStopBook(order *core.Order) bool {
 	return true
 }
 
-// CheckOCO checks and cancels any OCO (One Cancels Other) orders
+// CheckOCO checks and returns any OCO (One Cancels Other) orders
 func (b *MemoryBackend) CheckOCO(orderID string) string {
-	b.Lock()
-	defer b.Unlock()
+	b.RLock()
+	defer b.RUnlock()
 
-	ocoID, exists := b.ocoMapping[orderID]
-	if !exists {
-		return ""
-	}
-
-	// Clean up mappings
-	delete(b.ocoMapping, orderID)
-	delete(b.ocoMapping, ocoID)
-
-	return ocoID
+	// Simply return the OCO ID without deleting the mapping
+	return b.ocoMapping[orderID]
 }
 
 // GetBids returns the bid side of the order book for iteration

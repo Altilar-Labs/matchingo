@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/nikolaydubina/fpdecimal"
@@ -172,17 +173,32 @@ func (d *Done) ToMessagingDoneMessage() *messaging.DoneMessage {
 		msgActivated[i] = order.ID()
 	}
 
+	// Format decimal values consistently with 3 decimal places
+	formatDecimal := func(d fpdecimal.Decimal) string {
+		// Ensure decimal is formatted with 3 decimal places
+		val := d.String()
+		parts := strings.Split(val, ".")
+		if len(parts) == 1 {
+			// No decimal part, add .000
+			return val + ".000"
+		} else if len(parts[1]) < 3 {
+			// Fewer than 3 decimal places, add zeroes
+			return val + strings.Repeat("0", 3-len(parts[1]))
+		}
+		return val
+	}
+
 	return &messaging.DoneMessage{
 		OrderID:      d.Order.ID(),
-		ExecutedQty:  d.Processed.String(),
-		RemainingQty: d.Left.String(),
+		ExecutedQty:  formatDecimal(d.Processed),
+		RemainingQty: formatDecimal(d.Left),
 		Trades:       msgTrades,
 		Canceled:     msgCanceled,
 		Activated:    msgActivated,
 		Stored:       d.Stored,
-		Quantity:     d.Quantity.String(),
-		Processed:    d.Processed.String(),
-		Left:         d.Left.String(),
+		Quantity:     formatDecimal(d.Quantity),
+		Processed:    formatDecimal(d.Processed),
+		Left:         formatDecimal(d.Left),
 	}
 }
 

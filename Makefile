@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: test imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down test-integration test-redis
+.PHONY: test imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down test-integration test-redis test-stop-orders
 
 test: imports fix
 	go test ./pkg/...
@@ -97,6 +97,11 @@ test-redis:
 	go test -v -race ./pkg/server/... -run RedisIntegration # Run only Redis integration tests
 	@echo "Stopping dependencies..."
 	$(MAKE) test-deps-down
+
+test-stop-orders:
+	@echo "Running stop order tests with Docker containers..."
+	go test -v ./pkg/server/... -run 'TestIntegrationV2_.*StopLimit|TestIntegrationV2_.*StopLimitActivation'
+	@echo "Tests completed."
 
 # Default target
 default: build
