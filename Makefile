@@ -1,19 +1,43 @@
 SHELL := /bin/bash
 
-.PHONY: test imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down test-integration test-redis test-stop-orders
+.PHONY: test test-unit test-integration test-redis test-stop-orders imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down bench bench-memory bench-redis bench-verbose
 
-test: imports fix
-	go test ./pkg/...
+# Test targets
+test: test-unit test-integration
 
-test-v:
-	go test ./pkg/... -v
+test-unit:
+	@echo "Running unit tests..."
+	go test -v -race -coverprofile=coverage.out ./pkg/...
 
+test-integration:
+	@echo "Starting dependencies for integration tests..."
+	$(MAKE) test-deps-up
+	@echo "Running integration tests..."
+	go test -v -race ./test/integration/... -run IntegrationV2
+	@echo "Stopping dependencies..."
+	$(MAKE) test-deps-down
+
+test-redis:
+	@echo "Starting dependencies for Redis tests..."
+	$(MAKE) test-deps-up
+	@echo "Running Redis integration tests..."
+	go test -v -race ./test/integration/... -run RedisIntegration
+	@echo "Stopping dependencies..."
+	$(MAKE) test-deps-down
+
+test-stop-orders:
+	@echo "Running stop order tests with Docker containers..."
+	go test -v ./test/integration/... -run 'TestIntegrationV2_.*StopLimit|TestIntegrationV2_.*StopLimitActivation'
+	@echo "Tests completed."
+
+# Development targets
 demo-memory:
 	go run cmd/examples/basic/main.go
 
 demo-redis:
 	go run cmd/examples/redis/main.go
 
+# Benchmark targets
 bench:
 	go test -bench=. -benchmem -benchtime=1s ./pkg/...
 
@@ -23,10 +47,10 @@ bench-memory:
 bench-redis:
 	go test -bench=Redis -benchmem -benchtime=1s ./pkg/backend/redis
 
-# Run a specific benchmark with verbose output and proper filtering
 bench-verbose:
 	go test -v -bench=. -benchmem -benchtime=1s ./pkg/...
 
+# Build targets
 imports:
 	goimports -w .
 
@@ -57,6 +81,7 @@ build:
 
 build-all: proto build
 
+# Run targets
 run-server:
 	@echo "Running orderbook server..."
 	@./bin/orderbook-server
@@ -65,43 +90,16 @@ run-client:
 	@echo "Running orderbook client..."
 	@./bin/orderbook-client --cmd=list
 
-# Testing Dependencies Management
+# Test dependency management
 test-deps-up:
 	@echo "Starting test dependencies (Redis)..."
-	docker compose -f docker-compose.yml up -d --wait redis-test
+	docker compose -f docker-compose.yml up -d --wait redis
 	@echo "Test dependencies started."
 
 test-deps-down:
 	@echo "Stopping test dependencies (Redis)..."
 	docker compose -f docker-compose.yml down
 	@echo "Test dependencies stopped."
-
-# Add dependency management to main test target
-test:
-	@echo "Running tests..."
-	go test -v -race -coverprofile=coverage.out ./...
-	go tool cover -func=coverage.out
-
-test-integration:
-	@echo "Starting dependencies for integration tests..."
-	$(MAKE) test-deps-up
-	@echo "Running integration tests..."
-	go test -v -race ./pkg/server/... -run IntegrationV2 # Run only integration tests
-	@echo "Stopping dependencies..."
-	$(MAKE) test-deps-down
-
-test-redis:
-	@echo "Starting dependencies for Redis tests..."
-	$(MAKE) test-deps-up
-	@echo "Running Redis integration tests..."
-	go test -v -race ./pkg/server/... -run RedisIntegration # Run only Redis integration tests
-	@echo "Stopping dependencies..."
-	$(MAKE) test-deps-down
-
-test-stop-orders:
-	@echo "Running stop order tests with Docker containers..."
-	go test -v ./pkg/server/... -run 'TestIntegrationV2_.*StopLimit|TestIntegrationV2_.*StopLimitActivation'
-	@echo "Tests completed."
 
 # Default target
 default: build
