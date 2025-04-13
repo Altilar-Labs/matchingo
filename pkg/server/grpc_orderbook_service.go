@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/erain9/matchingo/pkg/api/proto"
@@ -26,6 +27,20 @@ type GRPCOrderBookService struct {
 func NewGRPCOrderBookService(manager *OrderBookManager) *GRPCOrderBookService {
 	return &GRPCOrderBookService{
 		manager: manager,
+	}
+}
+
+// Helper function to convert proto TIF enum to core TIF string
+func convertProtoTIFToCore(tif proto.TimeInForce) core.TIF {
+	switch tif {
+	case proto.TimeInForce_IOC:
+		return core.IOC
+	case proto.TimeInForce_FOK:
+		return core.FOK
+	case proto.TimeInForce_GTC:
+		fallthrough // Default to GTC
+	default:
+		return core.GTC
 	}
 }
 
@@ -199,50 +214,28 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		return nil, status.Errorf(codes.InvalidArgument, "invalid quantity: %v", err)
 	}
 
-	// Create the appropriate order based on the order type
+	// Convert side to core.Side
+	side := core.Buy
+	if req.Side == proto.OrderSide_SELL {
+		side = core.Sell
+	}
+
+	// Create core order
 	var order *core.Order
 	var done *core.Done
 	now := time.Now()
 
 	switch req.OrderType {
 	case proto.OrderType_MARKET:
-		// For market orders, price is not needed
-		// Convert side to core.Side
-		side := core.Buy
-		if req.Side == proto.OrderSide_SELL {
-			side = core.Sell
-		}
-
-		order = core.NewMarketOrder(req.OrderId, side, quantity)
-
+		// Market orders don't use IsQuote based on proto definition
+		order, err = core.NewMarketOrder(req.OrderId, side, quantity)
 	case proto.OrderType_LIMIT:
-		// Parse price for limit orders
 		price, err := fpdecimal.FromString(req.Price)
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid price: %v", err)
+			return nil, status.Errorf(codes.InvalidArgument, "invalid price format: %v", err)
 		}
-
-		// Convert side to core.Side
-		side := core.Buy
-		if req.Side == proto.OrderSide_SELL {
-			side = core.Sell
-		}
-
-		// Convert time in force
-		timeInForce := core.GTC
-		switch req.TimeInForce {
-		case proto.TimeInForce_GTC:
-			timeInForce = core.GTC
-		case proto.TimeInForce_IOC:
-			timeInForce = core.IOC
-		case proto.TimeInForce_FOK:
-			timeInForce = core.FOK
-		default:
-			return nil, status.Errorf(codes.InvalidArgument, "unsupported time in force: %v", req.TimeInForce)
-		}
-
-		order = core.NewLimitOrder(req.OrderId, side, quantity, price, timeInForce, req.OcoId)
-
+		tif := convertProtoTIFToCore(req.TimeInForce)
+		order, err = core.NewLimitOrder(req.OrderId, side, quantity, price, tif, req.OcoId)
 	case proto.OrderType_STOP:
 		// Parse stop price
 		stopPrice, err := fpdecimal.FromString(req.StopPrice)
@@ -250,44 +243,47 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 			return nil, status.Errorf(codes.InvalidArgument, "invalid stop price: %v", err)
 		}
 
-		// Convert side to core.Side
-		side := core.Buy
-		if req.Side == proto.OrderSide_SELL {
-			side = core.Sell
-		}
-
 		// Create a limit order with the stop price
-		order = core.NewLimitOrder(req.OrderId, side, quantity, stopPrice, core.GTC, req.OcoId)
-
+		order, err = core.NewLimitOrder(req.OrderId, side, quantity, stopPrice, core.GTC, req.OcoId)
 	case proto.OrderType_STOP_LIMIT:
-		// Parse prices
 		price, err := fpdecimal.FromString(req.Price)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid price: %v", err)
 		}
-
 		stopPrice, err := fpdecimal.FromString(req.StopPrice)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid stop price: %v", err)
 		}
 
-		// Convert side to core.Side
-		side := core.Buy
-		if req.Side == proto.OrderSide_SELL {
-			side = core.Sell
-		}
-
 		// Create a stop limit order
-		order = core.NewStopLimitOrder(req.OrderId, side, quantity, price, stopPrice, req.OcoId)
-
+		order, err = core.NewStopLimitOrder(req.OrderId, side, quantity, price, stopPrice, req.OcoId)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported order type: %v", req.OrderType)
+	}
+
+	// Check for order creation errors (e.g., invalid quantity/price from core)
+	if err != nil {
+		if errors.Is(err, core.ErrInvalidQuantity) || errors.Is(err, core.ErrInvalidPrice) || errors.Is(err, core.ErrInvalidTif) {
+			return nil, status.Errorf(codes.InvalidArgument, "order creation failed: %v", err)
+		}
+		// Handle other potential core errors as Internal
+		logger.Error().Err(err).Msg("Internal error creating core order")
+		return nil, status.Errorf(codes.Internal, "failed to create order: %v", err)
+	}
+
+	// Add nil check to prevent panic
+	if order == nil {
+		logger.Error().Msg("Order creation returned nil without error")
+		return nil, status.Error(codes.Internal, "order creation failed: nil order")
 	}
 
 	// Process the order
 	done, err = orderBook.Process(order)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to process order")
+		if errors.Is(err, core.ErrOrderExists) {
+			return nil, status.Errorf(codes.AlreadyExists, "order with ID %s already exists", req.OrderId)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to process order: %v", err)
 	}
 

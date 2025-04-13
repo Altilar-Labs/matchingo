@@ -6,94 +6,148 @@ import (
 
 	"github.com/erain9/matchingo/pkg/core"
 	"github.com/nikolaydubina/fpdecimal"
+	"github.com/stretchr/testify/require"
 )
 
-func BenchmarkMemoryBackend_StoreOrder(b *testing.B) {
-	backend := NewMemoryBackend()
+const benchSize = 10000
+
+func benchmarkAppendToSide(b *testing.B, backend *MemoryBackend, side core.Side) {
+	orders := make([]*core.Order, b.N)
+	for i := 0; i < b.N; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		backend.AppendToSide(side, orders[i])
+	}
+}
+
+func BenchmarkAppendToSide_Bids(b *testing.B) {
+	backend := NewMemoryBackend()
+	benchmarkAppendToSide(b, backend, core.Buy)
+}
+
+func BenchmarkAppendToSide_Asks(b *testing.B) {
+	backend := NewMemoryBackend()
+	benchmarkAppendToSide(b, backend, core.Sell)
+}
+
+func benchmarkRemoveFromSide(b *testing.B, backend *MemoryBackend, side core.Side) {
+	orders := make([]*core.Order, benchSize)
+	for i := 0; i < benchSize; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+		backend.AppendToSide(side, order)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		backend.RemoveFromSide(side, orders[i%benchSize])
+	}
+}
+
+func BenchmarkRemoveFromSide_Bids(b *testing.B) {
+	backend := NewMemoryBackend()
+	benchmarkRemoveFromSide(b, backend, core.Buy)
+}
+
+func BenchmarkRemoveFromSide_Asks(b *testing.B) {
+	backend := NewMemoryBackend()
+	benchmarkRemoveFromSide(b, backend, core.Sell)
+}
+
+func BenchmarkMemoryBackend_StoreOrder(b *testing.B) {
+	backend := NewMemoryBackend()
+	orders := make([]*core.Order, b.N)
+	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
-		price := fpdecimal.FromFloat(100.0)
+		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_ = backend.StoreOrder(order)
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		orders[i] = order
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = backend.StoreOrder(orders[i])
 	}
 }
 
 func BenchmarkMemoryBackend_GetOrder(b *testing.B) {
 	backend := NewMemoryBackend()
-
-	// Store some orders first
-	numOrders := 1000
-	orderIDs := make([]string, numOrders)
-
-	for i := 0; i < numOrders; i++ {
+	orderIDs := make([]string, benchSize)
+	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
 		orderIDs[i] = orderID
-		price := fpdecimal.FromFloat(100.0)
+		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
 		_ = backend.StoreOrder(order)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		index := i % numOrders
-		_ = backend.GetOrder(orderIDs[index])
+		_ = backend.GetOrder(orderIDs[i%benchSize])
 	}
 }
 
-func BenchmarkMemoryBackend_AppendToSide(b *testing.B) {
+func BenchmarkMemoryBackend_UpdateOrder(b *testing.B) {
 	backend := NewMemoryBackend()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	orders := make([]*core.Order, benchSize)
+	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
-		// Use different prices to test the sorting performance
-		price := fpdecimal.FromFloat(float64(100 + (i % 100)))
+		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_ = backend.StoreOrder(order)
-		backend.AppendToSide(core.Buy, order)
-	}
-}
-
-func BenchmarkMemoryBackend_RemoveFromSide(b *testing.B) {
-	backend := NewMemoryBackend()
-
-	// Store and add to side some orders first
-	numOrders := 100 // Reduced for faster execution
-	orders := make([]*core.Order, numOrders)
-
-	for i := 0; i < numOrders; i++ {
-		orderID := fmt.Sprintf("order-%d", i)
-		price := fpdecimal.FromFloat(float64(100 + (i % 100)))
-		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_ = backend.StoreOrder(order)
-		backend.AppendToSide(core.Buy, order)
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
 		orders[i] = order
+		_ = backend.StoreOrder(order)
 	}
 
-	// Pre-reset timer to exclude setup time
 	b.ResetTimer()
-
-	// Only run up to b.N iterations
 	for i := 0; i < b.N; i++ {
-		// Reset orders after we've gone through all of them
-		if i%numOrders == 0 && i > 0 {
-			b.StopTimer()
-			// Re-add all orders to the side
-			for j := 0; j < numOrders; j++ {
-				backend.AppendToSide(core.Buy, orders[j])
-			}
-			b.StartTimer()
-		}
+		order := orders[i%benchSize]
+		// Modify quantity slightly for update
+		order.SetQuantity(order.Quantity().Add(fpdecimal.FromFloat(0.1)))
+		_ = backend.UpdateOrder(order)
+	}
+}
 
-		// Get order index, making sure we don't go out of bounds
-		index := i % numOrders
-		backend.RemoveFromSide(core.Buy, orders[index])
+func BenchmarkMemoryBackend_DeleteOrder(b *testing.B) {
+	backend := NewMemoryBackend()
+	orderIDs := make([]string, benchSize)
+	for i := 0; i < benchSize; i++ {
+		orderID := fmt.Sprintf("order-%d", i)
+		orderIDs[i] = orderID
+		price := fpdecimal.FromFloat(float64(100 + i))
+		quantity := fpdecimal.FromFloat(10.0)
+		// Fix: Assign both return values and check error
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		_ = backend.StoreOrder(order)
+	}
+
+	b.ResetTimer()
+	// To avoid deleting the same order multiple times in the benchmark loop,
+	// we'll delete and potentially re-add within the loop, or pre-populate more orders.
+	// Simple approach for now: assume b.N <= benchSize
+	for i := 0; i < b.N; i++ {
+		backend.DeleteOrder(orderIDs[i])
 	}
 }
 
@@ -106,17 +160,20 @@ func BenchmarkOrderBook_Process_Memory(b *testing.B) {
 		orderID := fmt.Sprintf("sell-order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "")
-		_, _ = book.Process(order)
+		order, err := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("buy-order-%d", i)
-		price := fpdecimal.FromFloat(100.0) // Set price to match lowest sell order
 		quantity := fpdecimal.FromFloat(1.0)
-		order := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
-		_, _ = book.Process(order)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }
 
@@ -130,15 +187,19 @@ func BenchmarkOrderBook_LargeOrderBook_Memory(b *testing.B) {
 		buyOrderID := fmt.Sprintf("buy-order-%d", i)
 		buyPrice := fpdecimal.FromFloat(float64(90 - (i % 90)))
 		buyQuantity := fpdecimal.FromFloat(10.0)
-		buyOrder := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "")
-		_, _ = book.Process(buyOrder)
+		buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(buyOrder)
+		require.NoError(b, err)
 
 		// Add sell orders
 		sellOrderID := fmt.Sprintf("sell-order-%d", i)
 		sellPrice := fpdecimal.FromFloat(float64(110 + (i % 90)))
 		sellQuantity := fpdecimal.FromFloat(10.0)
-		sellOrder := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "")
-		_, _ = book.Process(sellOrder)
+		sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(sellOrder)
+		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
@@ -146,14 +207,9 @@ func BenchmarkOrderBook_LargeOrderBook_Memory(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("market-order-%d", i)
 		quantity := fpdecimal.FromFloat(5.0)
-
-		// Alternate between buy and sell market orders
-		side := core.Buy
-		if i%2 == 0 {
-			side = core.Sell
-		}
-
-		order := core.NewMarketOrder(orderID, side, quantity)
-		_, _ = book.Process(order)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }

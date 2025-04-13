@@ -363,6 +363,57 @@ func (rs *RedisSide) String() string {
 	return sb.String()
 }
 
+// Prices returns all prices in the order side
+func (rs *RedisSide) Prices() []fpdecimal.Decimal {
+	var members []string
+	var err error
+
+	if rs.reverse {
+		// For bids (highest first)
+		members, err = rs.backend.client.ZRevRange(rs.backend.ctx, rs.sideKey, 0, -1).Result()
+	} else {
+		// For asks (lowest first)
+		members, err = rs.backend.client.ZRange(rs.backend.ctx, rs.sideKey, 0, -1).Result()
+	}
+
+	if err != nil {
+		return []fpdecimal.Decimal{}
+	}
+
+	prices := make([]fpdecimal.Decimal, 0, len(members))
+	for _, priceStr := range members {
+		// Convert string to float64 first, then to fpdecimal
+		f, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			continue
+		}
+		prices = append(prices, fpdecimal.FromFloat(f))
+	}
+
+	return prices
+}
+
+// Orders returns all orders at a given price level
+func (rs *RedisSide) Orders(price fpdecimal.Decimal) []*core.Order {
+	priceKey := fmt.Sprintf("%s:%s", rs.sideKey, price.String())
+
+	// Get all order IDs at this price level
+	orderIDs, err := rs.backend.client.SMembers(rs.backend.ctx, priceKey).Result()
+	if err != nil {
+		return []*core.Order{}
+	}
+
+	orders := make([]*core.Order, 0, len(orderIDs))
+	for _, orderID := range orderIDs {
+		order := rs.backend.GetOrder(orderID)
+		if order != nil {
+			orders = append(orders, order)
+		}
+	}
+
+	return orders
+}
+
 // RedisStopBook represents the Redis stop book
 type RedisStopBook struct {
 	backend     *RedisBackend
@@ -425,6 +476,161 @@ func (rsb *RedisStopBook) String() string {
 	}
 
 	return sb.String()
+}
+
+// Prices returns all unique prices from both buy and sell sides
+func (rsb *RedisStopBook) Prices() []fpdecimal.Decimal {
+	// Get prices from buy side
+	buyPrices := make([]fpdecimal.Decimal, 0)
+	buyMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopBuyKey, 0, -1).Result()
+	if err == nil {
+		for _, priceStr := range buyMembers {
+			f, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			buyPrices = append(buyPrices, fpdecimal.FromFloat(f))
+		}
+	}
+
+	// Get prices from sell side
+	sellPrices := make([]fpdecimal.Decimal, 0)
+	sellMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopSellKey, 0, -1).Result()
+	if err == nil {
+		for _, priceStr := range sellMembers {
+			f, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			sellPrices = append(sellPrices, fpdecimal.FromFloat(f))
+		}
+	}
+
+	// Create a map to deduplicate prices
+	priceMap := make(map[string]fpdecimal.Decimal)
+	for _, price := range buyPrices {
+		priceMap[price.String()] = price
+	}
+	for _, price := range sellPrices {
+		priceMap[price.String()] = price
+	}
+
+	// Convert map back to slice
+	prices := make([]fpdecimal.Decimal, 0, len(priceMap))
+	for _, price := range priceMap {
+		prices = append(prices, price)
+	}
+
+	return prices
+}
+
+// Orders returns all orders at a given price level for both buy and sell sides
+func (rsb *RedisStopBook) Orders(price fpdecimal.Decimal) []*core.Order {
+	// Get buy orders at this price
+	buyPriceKey := fmt.Sprintf("%s:%s", rsb.stopBuyKey, price.String())
+	buyOrderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, buyPriceKey).Result()
+	if err != nil {
+		buyOrderIDs = []string{}
+	}
+
+	// Get sell orders at this price
+	sellPriceKey := fmt.Sprintf("%s:%s", rsb.stopSellKey, price.String())
+	sellOrderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, sellPriceKey).Result()
+	if err != nil {
+		sellOrderIDs = []string{}
+	}
+
+	// Combine order IDs
+	allOrderIDs := append(buyOrderIDs, sellOrderIDs...)
+	orders := make([]*core.Order, 0, len(allOrderIDs))
+
+	// Get each order
+	for _, orderID := range allOrderIDs {
+		order := rsb.backend.GetOrder(orderID)
+		if order != nil {
+			orders = append(orders, order)
+		}
+	}
+
+	return orders
+}
+
+// BuyOrders returns all buy stop orders
+func (rsb *RedisStopBook) BuyOrders() []*core.Order {
+	var allOrders []*core.Order
+
+	// Get all buy stop price levels
+	buyPrices := make([]fpdecimal.Decimal, 0)
+	buyMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopBuyKey, 0, -1).Result()
+	if err != nil {
+		return allOrders
+	}
+
+	// Convert price strings to fpdecimal values
+	for _, priceStr := range buyMembers {
+		f, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			continue
+		}
+		buyPrices = append(buyPrices, fpdecimal.FromFloat(f))
+	}
+
+	// Get all orders for each price level
+	for _, price := range buyPrices {
+		buyPriceKey := fmt.Sprintf("%s:%s", rsb.stopBuyKey, price.String())
+		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, buyPriceKey).Result()
+		if err != nil {
+			continue
+		}
+
+		for _, orderID := range orderIDs {
+			order := rsb.backend.GetOrder(orderID)
+			if order != nil {
+				allOrders = append(allOrders, order)
+			}
+		}
+	}
+
+	return allOrders
+}
+
+// SellOrders returns all sell stop orders
+func (rsb *RedisStopBook) SellOrders() []*core.Order {
+	var allOrders []*core.Order
+
+	// Get all sell stop price levels
+	sellPrices := make([]fpdecimal.Decimal, 0)
+	sellMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopSellKey, 0, -1).Result()
+	if err != nil {
+		return allOrders
+	}
+
+	// Convert price strings to fpdecimal values
+	for _, priceStr := range sellMembers {
+		f, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			continue
+		}
+		sellPrices = append(sellPrices, fpdecimal.FromFloat(f))
+	}
+
+	// Get all orders for each price level
+	for _, price := range sellPrices {
+		sellPriceKey := fmt.Sprintf("%s:%s", rsb.stopSellKey, price.String())
+		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, sellPriceKey).Result()
+		if err != nil {
+			continue
+		}
+
+		for _, orderID := range orderIDs {
+			order := rsb.backend.GetOrder(orderID)
+			if order != nil {
+				allOrders = append(allOrders, order)
+			}
+		}
+	}
+
+	return allOrders
 }
 
 // parseFloat converts a decimal to float64 for Redis score
