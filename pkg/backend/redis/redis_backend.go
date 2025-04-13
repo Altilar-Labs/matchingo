@@ -13,6 +13,33 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RedisOptions represents configuration options for Redis connection
+type RedisOptions struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+var defaultOptions = &RedisOptions{
+	Addr:     "localhost:6379",
+	Password: "",
+	DB:       0,
+}
+
+// SetDefaultRedisOptions sets the default options for Redis connections
+func SetDefaultRedisOptions(options *RedisOptions) {
+	defaultOptions = options
+}
+
+// GetRedisClient creates a new Redis client using the default options
+func GetRedisClient() *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     defaultOptions.Addr,
+		Password: defaultOptions.Password,
+		DB:       defaultOptions.DB,
+	})
+}
+
 // RedisBackend implements OrderBookBackend interface with Redis storage
 type RedisBackend struct {
 	sync.RWMutex
