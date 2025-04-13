@@ -1,0 +1,34 @@
+FROM golang:1.24-alpine AS builder
+
+# Install git and build tools
+RUN apk add --no-cache git build-base
+
+# Set working directory
+WORKDIR /app
+
+# Copy go.mod and go.sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN go build -o matchingo-server ./cmd/server/main.go
+
+# Final stage
+FROM alpine:latest
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Copy the binary
+COPY --from=builder /app/matchingo-server /usr/local/bin/
+
+# Expose ports
+EXPOSE 50051 8080
+
+# Run the server
+CMD ["matchingo-server"] 
