@@ -15,6 +15,16 @@ var (
 	newSyncProducer = sarama.NewSyncProducer
 )
 
+// SetBrokerList sets the Kafka broker address
+func SetBrokerList(broker string) {
+	brokerList = broker
+}
+
+// SetTopic sets the Kafka topic name
+func SetTopic(topicName string) {
+	topic = topicName
+}
+
 // QueueMessageSender implements the MessageSender interface
 // for sending messages to Kafka
 type QueueMessageSender struct{}
