@@ -49,7 +49,8 @@ func getMessageSender() messaging.MessageSender {
 
 // OrderBook implements standard matching algorithm
 type OrderBook struct {
-	backend OrderBookBackend
+	backend        OrderBookBackend
+	lastTradePrice fpdecimal.Decimal
 }
 
 // NewOrderBook creates Orderbook object with a backend
@@ -184,7 +185,7 @@ func (ob *OrderBook) deleteOrder(order *Order) {
 	}
 }
 
-func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err error) {
+func (ob *OrderBook) processMarketOrder(marketOrder *Order) (*Done, error) {
 	quantity := marketOrder.Quantity()
 
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
@@ -192,18 +193,16 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 	}
 
 	// Store the order first
-	err = ob.backend.StoreOrder(marketOrder)
+	err := ob.backend.StoreOrder(marketOrder)
 	if err != nil {
 		return nil, err
 	}
 
-	done = newDone(marketOrder)
+	done := newDone(marketOrder)
+	remainingQty := quantity
 
 	// Set market order as taker
 	marketOrder.SetTaker()
-
-	// Get the remaining quantity to process
-	remainingQty := quantity
 
 	// Process against the opposite side of the book
 	oppositeOrders := ob.getOppositeOrders(marketOrder.Side())
@@ -213,7 +212,7 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 	}); isOrderSideInterface {
 		prices := ordersInterface.Prices()
 
-		// Iterate through price levels
+		// Process each price level
 		for _, price := range prices {
 			if remainingQty.Equal(fpdecimal.Zero) {
 				break
@@ -230,8 +229,6 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 
 				// Determine the execution quantity
 				executionQty := min(remainingQty, order.Quantity())
-
-				// Execute the trade
 				remainingQty = remainingQty.Sub(executionQty)
 
 				// Update the matched order's quantity
@@ -250,163 +247,359 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (done *Done, err err
 				if order.Quantity().Equal(fpdecimal.Zero) {
 					ob.deleteOrder(order)
 				}
+
+				// Update the last trade price to the current execution price
+				ob.lastTradePrice = price
 			}
 		}
 	}
 
-	// Update the processed and left quantities in the done object
-	done.setLeftQuantity(&remainingQty)
+	// Calculate processed quantity
+	processedQty := quantity.Sub(remainingQty)
+
+	// Check if the market order was partially filled and is IOC
+	if remainingQty.GreaterThan(fpdecimal.Zero) && marketOrder.TIF() == IOC {
+		// For IOC market orders with remaining quantity, cancel the rest
+		done.appendCanceled(marketOrder)
+		done.Left = remainingQty
+		done.Processed = processedQty
+
+		// Add the taker order to trades with the processed quantity
+		if processedQty.GreaterThan(fpdecimal.Zero) {
+			done.appendOrder(marketOrder, processedQty, ob.lastTradePrice)
+		} else {
+			// If no matches found, still add the taker to trades with zero quantity
+			done.appendOrder(marketOrder, fpdecimal.Zero, fpdecimal.Zero)
+		}
+
+		// Delete the market order
+		ob.backend.DeleteOrder(marketOrder.ID())
+
+		// Send to Kafka if any trades occurred
+		if processedQty.GreaterThan(fpdecimal.Zero) {
+			// Trigger stop orders with the last trade price
+			ob.checkStopOrderTrigger(ob.lastTradePrice)
+			sendToKafka(done)
+		}
+
+		return done, nil
+	}
+
+	// For fully filled orders or non-IOC orders
+	if processedQty.GreaterThan(fpdecimal.Zero) {
+		done.appendOrder(marketOrder, processedQty, ob.lastTradePrice)
+	} else {
+		// For market orders with no matches, still add the taker to trades with zero quantity
+		done.appendOrder(marketOrder, fpdecimal.Zero, fpdecimal.Zero)
+	}
+
+	done.Processed = processedQty
+
+	// For market orders, we don't keep any remaining quantity in the book
+	if processedQty.GreaterThan(fpdecimal.Zero) {
+		done.Left = fpdecimal.Zero
+	} else {
+		done.Left = remainingQty
+	}
 
 	// Delete the market order
 	ob.backend.DeleteOrder(marketOrder.ID())
 
-	// Send the DoneMessage to Kafka. This won't block the call
-	// if it returns error.
+	// Update last trade price and check stop orders if any trades occurred
+	if done.Processed.GreaterThan(fpdecimal.Zero) && len(done.Trades) > 1 {
+		// Trigger stop orders with the last trade price (already set during order processing)
+		ob.checkStopOrderTrigger(ob.lastTradePrice)
+	}
+
+	// Send to Kafka
 	sendToKafka(done)
 
 	return done, nil
 }
 
-func (ob *OrderBook) processLimitOrder(limitOrder *Order) (done *Done, err error) {
-	quantity := limitOrder.Quantity()
+func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
+	if limitOrder.IsMarketOrder() {
+		return nil, ErrInvalidArgument
+	}
 
-	// Check if order exists
-	order := ob.GetOrder(limitOrder.ID())
-	if order != nil {
+	// Check for duplicate order
+	if existing := ob.backend.GetOrder(limitOrder.ID()); existing != nil {
 		return nil, ErrOrderExists
 	}
 
 	// Store the order first
-	err = ob.backend.StoreOrder(limitOrder)
+	err := ob.backend.StoreOrder(limitOrder)
 	if err != nil {
 		return nil, err
 	}
 
-	done = newDone(limitOrder)
-
-	// Check for OCO (One Cancels Other)
-	if ob.checkOCO(limitOrder, done) {
+	done := newDone(limitOrder)
+	oppositeOrders := ob.getOppositeOrders(limitOrder.Side())
+	if oppositeOrders == nil {
+		if limitOrder.TIF() == IOC || limitOrder.TIF() == FOK {
+			done.appendCanceled(limitOrder)
+			ob.backend.DeleteOrder(limitOrder.ID())
+			done.Left = limitOrder.Quantity()
+			done.Processed = fpdecimal.Zero
+			// Add the taker to trades with zero quantity
+			done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
+			return done, nil
+		}
+		ob.backend.AppendToSide(limitOrder.Side(), limitOrder)
+		// Append to done to indicate the order is now resting on the book
+		done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
 		return done, nil
 	}
 
-	// Set limit order as taker initially
-	limitOrder.SetTaker()
+	// For FOK orders, we need to check if the order can be fully filled
+	// before making any changes to the order book
+	if limitOrder.TIF() == FOK {
+		// First, calculate if we can fill the entire order
+		executionQty := limitOrder.Quantity()
+		availableQty := fpdecimal.Zero
+		canFillCompletely := false
 
-	// Get remaining quantity to process
-	remainingQty := quantity
-	orderPrice := limitOrder.Price()
-	orderSide := limitOrder.Side()
-
-	// Get the opposite side of the book
-	oppositeOrders := ob.getOppositeOrders(orderSide)
-	if ordersInterface, isOrderSideInterface := oppositeOrders.(interface {
-		Prices() []fpdecimal.Decimal
-		Orders(price fpdecimal.Decimal) []*Order
-	}); isOrderSideInterface {
-		prices := ordersInterface.Prices()
-
-		// Iterate through price levels
-		for _, price := range prices {
-			// Check if price conditions are met for matching
-			if !isPriceMatching(orderSide, orderPrice, price) {
-				break
-			}
-
-			if remainingQty.Equal(fpdecimal.Zero) {
-				break
-			}
-
-			// Get all orders at this price level
-			orders := ordersInterface.Orders(price)
-
-			// Process each order at this price level
-			for _, order := range orders {
-				if remainingQty.Equal(fpdecimal.Zero) {
+		if ordersInterface, ok := oppositeOrders.(interface {
+			Prices() []fpdecimal.Decimal
+			Orders(price fpdecimal.Decimal) []*Order
+		}); ok {
+			prices := ordersInterface.Prices()
+			for _, price := range prices {
+				if !ob.matchPrice(limitOrder.Side(), limitOrder.Price(), price) {
 					break
 				}
 
-				// Determine the execution quantity
-				executionQty := min(remainingQty, order.Quantity())
+				orders := ordersInterface.Orders(price)
+				for _, oppositeOrder := range orders {
+					availableQty = availableQty.Add(oppositeOrder.Quantity())
+					if availableQty.GreaterThanOrEqual(executionQty) {
+						canFillCompletely = true
+						break
+					}
+				}
+				if canFillCompletely {
+					break
+				}
+			}
+		}
 
-				// Execute the trade
-				remainingQty = remainingQty.Sub(executionQty)
+		if !canFillCompletely {
+			// Cannot fill the FOK order completely, cancel it
+			done.appendCanceled(limitOrder)
+			ob.backend.DeleteOrder(limitOrder.ID())
+			done.Left = executionQty
+			done.Processed = fpdecimal.Zero
+			// Add the taker to trades with zero quantity
+			done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
+			return done, nil
+		}
+		// If we can fill completely, proceed with normal execution below
+	}
 
-				// Update the matched order's quantity
-				order.DecreaseQuantity(executionQty)
+	executionQty := limitOrder.Quantity()
+	processedQty := fpdecimal.Zero
 
-				// Record the trade in the done object
-				done.appendOrder(order, executionQty, price)
+	if ordersInterface, ok := oppositeOrders.(interface {
+		Prices() []fpdecimal.Decimal
+		Orders(price fpdecimal.Decimal) []*Order
+	}); ok {
+		prices := ordersInterface.Prices()
+		for _, price := range prices {
+			if !ob.matchPrice(limitOrder.Side(), limitOrder.Price(), price) {
+				break
+			}
 
-				// Update the order in the backend
-				err = ob.backend.UpdateOrder(order)
-				if err != nil {
-					return nil, err
+			orders := ordersInterface.Orders(price)
+			for _, oppositeOrder := range orders {
+				availableQty := oppositeOrder.Quantity()
+				matchQty := availableQty
+				if executionQty.Sub(processedQty).LessThan(availableQty) {
+					matchQty = executionQty.Sub(processedQty)
 				}
 
-				// If order is fully executed, remove it from the book
-				if order.Quantity().Equal(fpdecimal.Zero) {
-					ob.deleteOrder(order)
+				if matchQty.Equal(fpdecimal.Zero) {
+					break
 				}
+
+				done.appendOrder(oppositeOrder, matchQty, oppositeOrder.Price()) // Record trade for the matched maker order
+				processedQty = processedQty.Add(matchQty)
+
+				// Update the opposite order's quantity
+				oppositeOrder.SetQuantity(availableQty.Sub(matchQty))
+				if oppositeOrder.Quantity().Equal(fpdecimal.Zero) {
+					ob.backend.RemoveFromSide(oppositeOrder.Side(), oppositeOrder)
+					ob.backend.DeleteOrder(oppositeOrder.ID())
+				} else {
+					ob.backend.UpdateOrder(oppositeOrder)
+				}
+
+				if processedQty.Equal(executionQty) {
+					break
+				}
+			}
+			if processedQty.Equal(executionQty) {
+				break
 			}
 		}
 	}
 
-	// If there's remaining quantity, add the order to the book
-	if !remainingQty.Equal(fpdecimal.Zero) {
-		// Update order quantity to the remaining amount
-		limitOrder.SetQuantity(remainingQty)
+	leftQty := executionQty.Sub(processedQty)
 
-		// Set as maker since it's going in the book
-		limitOrder.SetMaker()
+	// This section is now only for IOC orders, as FOK orders are handled above
+	if !leftQty.Equal(fpdecimal.Zero) {
+		if limitOrder.TIF() == IOC {
+			done.appendCanceled(limitOrder)
+			ob.backend.DeleteOrder(limitOrder.ID())
+			done.Left = leftQty
+			done.Processed = processedQty
+			done.Stored = false
 
-		// Add to the appropriate side of the book
-		ob.backend.AppendToSide(orderSide, limitOrder)
+			// Add the taker to trades with processed quantity
+			done.appendOrder(limitOrder, processedQty, limitOrder.Price())
 
-		// Mark as stored in the done object
+			return done, nil
+		}
+		// For GTC or other TIFs that allow resting orders:
+		limitOrder.SetQuantity(leftQty)
+		ob.backend.UpdateOrder(limitOrder) // Update the order with the new quantity
+		ob.backend.AppendToSide(limitOrder.Side(), limitOrder)
+		// Append to done to indicate the order is now resting on the book with remaining qty
+		done.appendOrder(limitOrder, fpdecimal.Zero, limitOrder.Price())
 		done.Stored = true
 	} else {
-		// Fully executed, remove from the system
+		// Order fully filled
 		ob.backend.DeleteOrder(limitOrder.ID())
+		done.Stored = false
 	}
 
-	// Update the processed and left quantities in the done object
-	done.setLeftQuantity(&remainingQty)
+	// Append the taker order to trades if it was partially or fully filled
+	if processedQty.GreaterThan(fpdecimal.Zero) {
+		// Use the original executionQty for the taker trade record, but price is limit price
+		done.appendOrder(limitOrder, processedQty, limitOrder.Price())
+	}
 
-	// Send the DoneMessage to Kafka. This won't block the call
-	// if it returns error.
-	sendToKafka(done)
+	done.Left = leftQty
+	done.Processed = processedQty
+
+	// Update last trade price for stop orders if a trade occurred
+	if processedQty.GreaterThan(fpdecimal.Zero) {
+		// Use the price of the last matched maker order as the trade price?
+		// Or the taker's limit price? Let's use the taker's price for now.
+		ob.lastTradePrice = limitOrder.Price()
+		ob.checkStopOrderTrigger(ob.lastTradePrice)
+		sendToKafka(done)
+	}
 
 	return done, nil
 }
 
-func (ob *OrderBook) processStopOrder(stopOrder *Order) (done *Done, err error) {
-	// Check if order exists
-	order := ob.GetOrder(stopOrder.ID())
-	if order != nil {
+func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
+	if !stopOrder.IsStopOrder() {
+		return nil, ErrInvalidArgument
+	}
+
+	// Check for duplicate order
+	if existing := ob.backend.GetOrder(stopOrder.ID()); existing != nil {
 		return nil, ErrOrderExists
 	}
 
-	// Store the order first
-	err = ob.backend.StoreOrder(stopOrder)
+	done := newDone(stopOrder)
+
+	// Store the stop order first
+	err := ob.backend.StoreOrder(stopOrder)
 	if err != nil {
 		return nil, err
 	}
 
-	// Add to stop book
+	// Check if stop price is triggered
+	if !ob.lastTradePrice.Equal(fpdecimal.Zero) {
+		if (stopOrder.Side() == Buy && ob.lastTradePrice.GreaterThanOrEqual(stopOrder.StopPrice())) ||
+			(stopOrder.Side() == Sell && ob.lastTradePrice.LessThanOrEqual(stopOrder.StopPrice())) {
+
+			// Remove from stop book before triggering
+			ob.backend.RemoveFromStopBook(stopOrder)
+
+			// Convert to limit order
+			limitOrder, err := NewLimitOrder(
+				stopOrder.ID(),
+				stopOrder.Side(),
+				stopOrder.Quantity(),
+				stopOrder.Price(),
+				stopOrder.TIF(),
+				stopOrder.OCO(),
+			)
+			if err != nil {
+				ob.backend.DeleteOrder(stopOrder.ID())
+				return nil, err
+			}
+
+			// Process as limit order
+			return ob.processLimitOrder(limitOrder)
+		}
+	}
+
+	// Add to stop book if not triggered
 	ob.backend.AppendToStopBook(stopOrder)
-
-	// Create done object
-	done = newDone(stopOrder)
-	done.Stored = true
-
-	quantity := stopOrder.Quantity()
-	done.setLeftQuantity(&quantity)
-
-	// Send the DoneMessage to Kafka. This won't block the call
-	// if it returns error.
-	sendToKafka(done)
-
+	done.appendOrder(stopOrder, stopOrder.Quantity(), stopOrder.Price())
 	return done, nil
+}
+
+// Helper function to check if a stop order should be triggered
+func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
+	ob.lastTradePrice = lastPrice
+	stopBook := ob.backend.GetStopBook()
+	if stopBookInterface, ok := stopBook.(interface {
+		Orders(price fpdecimal.Decimal) []*Order
+		Prices() []fpdecimal.Decimal
+	}); ok {
+		prices := stopBookInterface.Prices()
+		for _, price := range prices {
+			orders := stopBookInterface.Orders(price)
+			for _, order := range orders {
+				triggered := false
+				if order.Side() == Buy && lastPrice.GreaterThanOrEqual(order.StopPrice()) {
+					triggered = true
+				} else if order.Side() == Sell && lastPrice.LessThanOrEqual(order.StopPrice()) {
+					triggered = true
+				}
+
+				if triggered {
+					// Remove from stop book ONLY
+					ob.backend.RemoveFromStopBook(order)
+					// Do NOT delete the order record here; let the limit order processing handle it.
+
+					// Convert to limit order and process
+					limitOrder, err := NewLimitOrder(
+						order.ID(),
+						order.Side(),
+						order.Quantity(),
+						order.Price(),
+						order.TIF(),
+						order.OCO(),
+					)
+					if err != nil {
+						// TODO: Log error
+						continue
+					}
+
+					// Update the order record in the backend to reflect the new limit order state.
+					// Assuming StoreOrder acts like an upsert or replaces the old stop order entry.
+					err = ob.backend.StoreOrder(limitOrder)
+					if err != nil {
+						// TODO: Log error
+						continue
+					}
+
+					// Process the newly activated limit order
+					// processLimitOrder should handle potential re-storage checks if needed.
+					_, processErr := ob.Process(limitOrder)
+					if processErr != nil {
+						// TODO: Log error
+					}
+				}
+			}
+		}
+	}
 }
 
 func (ob *OrderBook) checkOCO(order *Order, done *Done) bool {
@@ -424,6 +617,7 @@ func (ob *OrderBook) checkOCO(order *Order, done *Done) bool {
 	if ocoOrder != nil {
 		ob.CancelOrder(ocoID)
 		done.appendCanceled(ocoOrder)
+		return true
 	}
 
 	return false
@@ -480,13 +674,11 @@ func min(a, b fpdecimal.Decimal) fpdecimal.Decimal {
 	return b
 }
 
-// isPriceMatching checks if the order price matches with the book price
-func isPriceMatching(side Side, orderPrice, bookPrice fpdecimal.Decimal) bool {
+// matchPrice checks if the order price matches with the book price
+func (ob *OrderBook) matchPrice(side Side, orderPrice, bookPrice fpdecimal.Decimal) bool {
 	if side == Buy {
-		// For buy orders, the order price must be >= the book price (sell price)
 		return orderPrice.GreaterThanOrEqual(bookPrice)
 	}
-	// For sell orders, the order price must be <= the book price (buy price)
 	return orderPrice.LessThanOrEqual(bookPrice)
 }
 
