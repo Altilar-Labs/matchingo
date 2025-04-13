@@ -1,4 +1,4 @@
-package server_test
+package integration
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/erain9/matchingo/pkg/messaging/kafka"
 	"github.com/erain9/matchingo/pkg/server"
-	"github.com/erain9/matchingo/pkg/testutil"
+	testutil "github.com/erain9/matchingo/test/utils"
 	"github.com/go-redis/redis/v8"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/stretchr/testify/assert"

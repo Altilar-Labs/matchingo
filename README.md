@@ -157,19 +157,6 @@ The `matchingo` library includes a high-performance matching engine that follows
 
 ### Example Usage
 
-To see the matching engine in action, run the enhanced example:
-
-```bash
-go run ./cmd/examples/matching/enhanced_example/main.go
-```
-
-This example demonstrates:
-- Adding orders to the book
-- Matching orders at the same price level
-- Matching orders across multiple price levels
-- Market order execution
-- Partial fills and order book updates
-
 ## gRPC Service
 
 Matchingo now includes a gRPC service for managing multiple order books. The service provides a comprehensive API for creating and managing order books, as well as executing trades.

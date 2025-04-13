@@ -1,4 +1,4 @@
-package server_test
+package integration
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/erain9/matchingo/pkg/api/proto"
-	"github.com/erain9/matchingo/pkg/testutil"
+	testutil "github.com/erain9/matchingo/test/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
