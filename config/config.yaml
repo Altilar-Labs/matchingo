@@ -1,0 +1,25 @@
+# Matchingo Server Configuration
+
+server:
+  # Address for the gRPC server
+  grpc_addr: ":50051"
+  # Address for the HTTP server
+  http_addr: ":8080"
+  # Log level: debug, info, warn, error
+  log_level: "info"
+  # Log format: json, pretty
+  log_format: "pretty"
+
+redis:
+  # Redis server address
+  addr: "localhost:6379"
+  # Redis password (optional)
+  password: ""
+  # Redis database number
+  db: 0
+
+kafka:
+  # Kafka broker address
+  broker_addr: "localhost:9092"
+  # Kafka topic for trade messages
+  topic: "test-msg-queue" 
