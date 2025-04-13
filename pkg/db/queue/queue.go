@@ -27,7 +27,29 @@ func SetTopic(topicName string) {
 
 // QueueMessageSender implements the MessageSender interface
 // for sending messages to Kafka
-type QueueMessageSender struct{}
+type QueueMessageSender struct {
+	producer sarama.SyncProducer
+}
+
+// NewQueueMessageSender creates a new QueueMessageSender with an initialized Kafka producer
+func NewQueueMessageSender() (*QueueMessageSender, error) {
+	producer, err := newSyncProducer([]string{brokerList}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka producer: %v", err)
+	}
+
+	return &QueueMessageSender{
+		producer: producer,
+	}, nil
+}
+
+// Close closes the Kafka producer
+func (q *QueueMessageSender) Close() error {
+	if q.producer != nil {
+		return q.producer.Close()
+	}
+	return nil
+}
 
 // SendDoneMessage sends the DoneMessage to the Kafka queue
 func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error {
@@ -70,14 +92,8 @@ func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error 
 		Value: sarama.ByteEncoder(messageBytes),
 	}
 
-	// Send the message to Kafka
-	producer, err := newSyncProducer([]string{brokerList}, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create Kafka producer: %v", err)
-	}
-	defer producer.Close()
-
-	_, _, err = producer.SendMessage(msg)
+	// Send the message to Kafka using the existing producer
+	_, _, err = q.producer.SendMessage(msg)
 	if err != nil {
 		return fmt.Errorf("failed to send message to Kafka: %v", err)
 	}

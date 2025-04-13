@@ -20,7 +20,14 @@ var (
 
 // defaultMessageSenderFactory returns the default Kafka sender.
 func defaultMessageSenderFactory() messaging.MessageSender {
-	return &queue.QueueMessageSender{}
+	sender, err := queue.NewQueueMessageSender()
+	if err != nil {
+		// Log the error but return a nil sender
+		// The caller should handle the nil case
+		fmt.Printf("Error creating message sender: %v\n", err)
+		return nil
+	}
+	return sender
 }
 
 // SetMessageSenderFactory allows overriding the default message sender, primarily for testing.
