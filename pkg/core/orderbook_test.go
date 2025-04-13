@@ -5,22 +5,27 @@ import (
 	"testing"
 
 	"github.com/nikolaydubina/fpdecimal"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockBackend implements the OrderBookBackend interface for testing with enhanced functionality
 type mockBackend struct {
-	orders    map[string]*Order
-	sellSide  mockOrderSide
-	buySide   mockOrderSide
-	stopBooks []*Order
+	orders   map[string]*Order
+	sellSide mockOrderSide
+	buySide  mockOrderSide
+	stopBook mockStopBook
 }
 
 func newMockBackend() *mockBackend {
 	return &mockBackend{
-		orders:    make(map[string]*Order),
-		sellSide:  mockOrderSide{orders: make(map[string]fpdecimalOrders)},
-		buySide:   mockOrderSide{orders: make(map[string]fpdecimalOrders)},
-		stopBooks: make([]*Order, 0),
+		orders:   make(map[string]*Order),
+		sellSide: mockOrderSide{orders: make(map[string]fpdecimalOrders)},
+		buySide:  mockOrderSide{orders: make(map[string]fpdecimalOrders)},
+		stopBook: mockStopBook{
+			buy:  mockOrderSide{orders: make(map[string]fpdecimalOrders)},
+			sell: mockOrderSide{orders: make(map[string]fpdecimalOrders)},
+		},
 	}
 }
 
@@ -58,17 +63,18 @@ func (m *mockBackend) RemoveFromSide(side Side, order *Order) bool {
 }
 
 func (m *mockBackend) AppendToStopBook(order *Order) {
-	m.stopBooks = append(m.stopBooks, order)
+	if order.Side() == Buy {
+		m.stopBook.buy.appendOrder(order)
+	} else {
+		m.stopBook.sell.appendOrder(order)
+	}
 }
 
 func (m *mockBackend) RemoveFromStopBook(order *Order) bool {
-	for i, o := range m.stopBooks {
-		if o.ID() == order.ID() {
-			m.stopBooks = append(m.stopBooks[:i], m.stopBooks[i+1:]...)
-			return true
-		}
+	if order.Side() == Buy {
+		return m.stopBook.buy.removeOrder(order)
 	}
-	return false
+	return m.stopBook.sell.removeOrder(order)
 }
 
 func (m *mockBackend) CheckOCO(orderID string) string {
@@ -84,7 +90,7 @@ func (m *mockBackend) GetAsks() interface{} {
 }
 
 func (m *mockBackend) GetStopBook() interface{} {
-	return m.stopBooks
+	return &m.stopBook
 }
 
 // fpdecimalOrders is a map from order ID to Order
@@ -96,24 +102,34 @@ type mockOrderSide struct {
 }
 
 func (m *mockOrderSide) appendOrder(order *Order) {
-	price := order.Price().String()
-	if _, exists := m.orders[price]; !exists {
-		m.orders[price] = make(fpdecimalOrders)
+	var priceStr string
+	if order.IsStopOrder() {
+		priceStr = order.StopPrice().String()
+	} else {
+		priceStr = order.Price().String()
 	}
-	m.orders[price][order.ID()] = order
+	if _, exists := m.orders[priceStr]; !exists {
+		m.orders[priceStr] = make(fpdecimalOrders)
+	}
+	m.orders[priceStr][order.ID()] = order
 }
 
 func (m *mockOrderSide) removeOrder(order *Order) bool {
-	price := order.Price().String()
-	if _, exists := m.orders[price]; !exists {
+	var priceStr string
+	if order.IsStopOrder() {
+		priceStr = order.StopPrice().String()
+	} else {
+		priceStr = order.Price().String()
+	}
+	if _, exists := m.orders[priceStr]; !exists {
 		return false
 	}
-	if _, exists := m.orders[price][order.ID()]; !exists {
+	if _, exists := m.orders[priceStr][order.ID()]; !exists {
 		return false
 	}
-	delete(m.orders[price], order.ID())
-	if len(m.orders[price]) == 0 {
-		delete(m.orders, price)
+	delete(m.orders[priceStr], order.ID())
+	if len(m.orders[priceStr]) == 0 {
+		delete(m.orders, priceStr)
 	}
 	return true
 }
@@ -166,6 +182,52 @@ func (m *mockOrderSide) Orders(price fpdecimal.Decimal) []*Order {
 	return orders
 }
 
+type mockStopBook struct {
+	buy  mockOrderSide
+	sell mockOrderSide
+}
+
+func (m *mockStopBook) Orders(price fpdecimal.Decimal) []*Order {
+	var orders []*Order
+	if q, ok := m.buy.orders[price.String()]; ok {
+		for _, order := range q {
+			orders = append(orders, order)
+		}
+	}
+	if q, ok := m.sell.orders[price.String()]; ok {
+		for _, order := range q {
+			orders = append(orders, order)
+		}
+	}
+	return orders
+}
+
+// Prices returns all unique prices from both buy and sell sides
+func (m *mockStopBook) Prices() []fpdecimal.Decimal {
+	// Collect all unique prices from both sides
+	priceMap := make(map[string]fpdecimal.Decimal)
+
+	// Add buy side prices
+	for priceStr := range m.buy.orders {
+		price, _ := fpdecimal.FromString(priceStr)
+		priceMap[priceStr] = price
+	}
+
+	// Add sell side prices
+	for priceStr := range m.sell.orders {
+		price, _ := fpdecimal.FromString(priceStr)
+		priceMap[priceStr] = price
+	}
+
+	// Convert map to slice
+	prices := make([]fpdecimal.Decimal, 0, len(priceMap))
+	for _, price := range priceMap {
+		prices = append(prices, price)
+	}
+
+	return prices
+}
+
 func TestOrderBookCreation(t *testing.T) {
 	backend := newMockBackend()
 	book := NewOrderBook(backend)
@@ -183,43 +245,42 @@ func TestMarketOrderExecution(t *testing.T) {
 	sellOrderID := "sell-1"
 	sellPrice := fpdecimal.FromFloat(10.0)
 	sellQty := fpdecimal.FromFloat(5.0)
-	sellOrder := NewLimitOrder(sellOrderID, Sell, sellQty, sellPrice, GTC, "")
+	sellOrder, err := NewLimitOrder(sellOrderID, Sell, sellQty, sellPrice, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, sellOrder)
 
 	// Process the sell order
-	_, err := book.Process(sellOrder)
-	if err != nil {
-		t.Errorf("Expected no error when processing sell order, got %v", err)
-	}
+	_, err = book.Process(sellOrder)
+	require.NoError(t, err, "Expected no error when processing sell order")
 
 	// Create a buy market order
 	buyOrderID := "buy-1"
 	buyQty := fpdecimal.FromFloat(2.0)
-	buyOrder := NewMarketOrder(buyOrderID, Buy, buyQty)
+	buyOrder, err := NewMarketOrder(buyOrderID, Buy, buyQty)
+	require.NoError(t, err)
+	require.NotNil(t, buyOrder)
 
 	// Process the buy order
 	done, err := book.Process(buyOrder)
-	if err != nil {
-		t.Errorf("Expected no error when processing buy order, got %v", err)
-	}
+	require.NoError(t, err, "Expected no error when processing buy order")
+	require.NotNil(t, done)
 
 	// Verify the results
-	if done.Processed.Equal(fpdecimal.Zero) {
-		t.Error("Expected the order to be partially processed, got zero processed quantity")
-	}
+	assert.True(t, done.Processed.Equal(buyQty), "Expected processed quantity %s, got %s", buyQty, done.Processed)
+	assert.True(t, done.Left.Equal(fpdecimal.Zero), "Expected left quantity to be zero, got %s", done.Left)
 
-	// Check if trades were recorded
-	if len(done.Trades) == 0 {
-		t.Error("Expected trades to be recorded, got none")
-	}
+	// Check if trades were recorded (taker trade + at least one maker trade)
+	assert.GreaterOrEqual(t, len(done.Trades), 2, "Expected trades (taker + maker) to be recorded, got %d", len(done.Trades))
 
 	// Verify the remaining quantity of the sell order
 	remainingSellQty := sellQty.Sub(buyQty)
 	updatedSellOrder := backend.GetOrder(sellOrderID)
-	if updatedSellOrder == nil {
-		t.Error("Expected sell order to still exist, got nil")
-	} else if !updatedSellOrder.Quantity().Equal(remainingSellQty) {
-		t.Errorf("Expected remaining sell quantity to be %s, got %s", remainingSellQty.String(), updatedSellOrder.Quantity().String())
-	}
+	require.NotNil(t, updatedSellOrder, "Expected sell order to still exist, got nil")
+	assert.True(t, updatedSellOrder.Quantity().Equal(remainingSellQty), "Expected remaining sell quantity %s, got %s", remainingSellQty, updatedSellOrder.Quantity())
+
+	// Verify the buy order is fully filled (should not be in backend)
+	finalBuyOrder := backend.GetOrder(buyOrderID)
+	assert.Nil(t, finalBuyOrder, "Expected fully filled market buy order to be removed from backend")
 }
 
 func TestLimitOrderMatching(t *testing.T) {
@@ -230,10 +291,11 @@ func TestLimitOrderMatching(t *testing.T) {
 	sellOrderID := "sell-1"
 	sellPrice := fpdecimal.FromFloat(10.0)
 	sellQty := fpdecimal.FromFloat(5.0)
-	sellOrder := NewLimitOrder(sellOrderID, Sell, sellQty, sellPrice, GTC, "")
+	sellOrder, err := NewLimitOrder(sellOrderID, Sell, sellQty, sellPrice, GTC, "")
+	require.NoError(t, err)
 
 	// Process the sell order
-	_, err := book.Process(sellOrder)
+	_, err = book.Process(sellOrder)
 	if err != nil {
 		t.Errorf("Expected no error when processing sell order, got %v", err)
 	}
@@ -242,7 +304,8 @@ func TestLimitOrderMatching(t *testing.T) {
 	buyOrderID := "buy-1"
 	buyPrice := fpdecimal.FromFloat(10.0) // Exact match
 	buyQty := fpdecimal.FromFloat(3.0)
-	buyOrder := NewLimitOrder(buyOrderID, Buy, buyQty, buyPrice, GTC, "")
+	buyOrder, err := NewLimitOrder(buyOrderID, Buy, buyQty, buyPrice, GTC, "")
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buyOrder)
@@ -275,15 +338,18 @@ func TestCompleteOrderExecution(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Create multiple sell limit orders
-	sell1 := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "")
-	sell2 := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "")
+	sell1, err1 := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "")
+	sell2, err2 := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "")
+	require.NoError(t, err1)
+	require.NoError(t, err2)
 
 	// Process sell orders
 	book.Process(sell1)
 	book.Process(sell2)
 
 	// Create a buy limit order that matches both sells completely
-	buy := NewLimitOrder("buy-1", Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(11.0), GTC, "")
+	buy, err := NewLimitOrder("buy-1", Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(11.0), GTC, "")
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buy)
@@ -317,13 +383,16 @@ func TestPartialFillAndBookInsertion(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Create a small sell limit order
-	sell := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(10.0), GTC, "")
+	sell, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
 
 	// Process sell order
-	book.Process(sell)
+	_, err = book.Process(sell)
+	require.NoError(t, err)
 
 	// Create a larger buy limit order
-	buy := NewLimitOrder("buy-1", Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
+	buy, err := NewLimitOrder("buy-1", Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
 
 	// Process the buy order - should partially fill and be inserted into the book
 	done, err := book.Process(buy)
@@ -370,17 +439,24 @@ func TestPriceTimeOrderPriority(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Create multiple sell limit orders at different prices
-	sell1 := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(10.0), GTC, "")
-	sell2 := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "")
-	sell3 := NewLimitOrder("sell-3", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(9.5), GTC, "")
+	sell1, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	sell2, err := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "")
+	require.NoError(t, err)
+	sell3, err := NewLimitOrder("sell-3", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(9.5), GTC, "")
+	require.NoError(t, err)
 
 	// Process sell orders
-	book.Process(sell1)
-	book.Process(sell2)
-	book.Process(sell3)
+	_, err = book.Process(sell1)
+	require.NoError(t, err)
+	_, err = book.Process(sell2)
+	require.NoError(t, err)
+	_, err = book.Process(sell3)
+	require.NoError(t, err)
 
 	// Create a buy market order to match against the best prices
-	buy := NewMarketOrder("buy-1", Buy, fpdecimal.FromFloat(3.0))
+	buy, err := NewMarketOrder("buy-1", Buy, fpdecimal.FromFloat(3.0))
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buy)
@@ -428,15 +504,20 @@ func TestMarketOrderFullExecution(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Create multiple sell limit orders with enough quantity
-	sell1 := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
-	sell2 := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(11.0), GTC, "")
+	sell1, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	sell2, err := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(11.0), GTC, "")
+	require.NoError(t, err)
 
 	// Process sell orders
-	book.Process(sell1)
-	book.Process(sell2)
+	_, err = book.Process(sell1)
+	require.NoError(t, err)
+	_, err = book.Process(sell2)
+	require.NoError(t, err)
 
 	// Create a buy market order
-	buy := NewMarketOrder("buy-1", Buy, fpdecimal.FromFloat(7.0))
+	buy, err := NewMarketOrder("buy-1", Buy, fpdecimal.FromFloat(7.0))
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buy)
@@ -472,8 +553,14 @@ func TestCalculateMarketPrice(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Add some sell orders
-	book.Process(NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, ""))
-	book.Process(NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, ""))
+	sell1, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sell1)
+	require.NoError(t, err)
+	sell2, err := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sell2)
+	require.NoError(t, err)
 
 	// Calculate market price for buy order
 	price, err := book.CalculateMarketPrice(Buy, fpdecimal.FromFloat(4.0))
@@ -502,38 +589,184 @@ func BenchmarkOrderMatching(b *testing.B) {
 	// Add a bunch of sell orders at different price levels
 	for i := 0; i < 100; i++ {
 		price := 10.0 + float64(i)*0.1
-		book.Process(NewLimitOrder(
+		sellOrder, err := NewLimitOrder(
 			"sell-"+string(rune(i)),
 			Sell,
 			fpdecimal.FromFloat(1.0),
 			fpdecimal.FromFloat(price),
 			GTC,
-			""))
+			"")
+		require.NoError(b, err)
+		_, err = book.Process(sellOrder)
+		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		// Create and process a buy market order
-		buy := NewMarketOrder("buy-bench", Buy, fpdecimal.FromFloat(5.0))
-		book.Process(buy)
+		buy, err := NewMarketOrder("buy-bench", Buy, fpdecimal.FromFloat(5.0))
+		require.NoError(b, err)
+		_, err = book.Process(buy)
+		require.NoError(b, err)
 
 		// Refill the book for the next iteration
 		for j := 0; j < 5; j++ {
 			price := 10.0 + float64(j)*0.1
-			book.Process(NewLimitOrder(
+			sellOrder, err := NewLimitOrder(
 				"sell-refill-"+string(rune(j)),
 				Sell,
 				fpdecimal.FromFloat(1.0),
 				fpdecimal.FromFloat(price),
 				GTC,
-				""))
+				"")
+			require.NoError(b, err)
+			_, err = book.Process(sellOrder)
+			require.NoError(b, err)
 		}
 	}
 }
 
+func TestStopOrder(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Create a stop-limit order
+	limitPrice := fpdecimal.FromFloat(100.0)
+	stopPrice := fpdecimal.FromFloat(105.0)
+	qty := fpdecimal.FromFloat(1.0)
+	stopOrder, err := NewStopLimitOrder("stop-buy", Buy, qty, limitPrice, stopPrice, "")
+	require.NoError(t, err)
+	require.NotNil(t, stopOrder)
+
+	// Process the stop order (should be added but not executed)
+	_, err = book.Process(stopOrder)
+	require.NoError(t, err)
+
+	// Verify stop order is in the stop book
+	stopBook := backend.GetStopBook().(*mockStopBook)
+	orders := stopBook.Orders(stopPrice)
+	assert.Equal(t, 1, len(orders), "Stop order should be added to backend")
+
+	// Debug: Check the prices in the stop book
+	prices := stopBook.Prices()
+	t.Logf("Stop prices before trigger: %v", prices)
+
+	// Debug: print the stop order details
+	t.Logf("Stop order: ID=%s, Side=%v, StopPrice=%s", stopOrder.ID(), stopOrder.Side(), stopOrder.StopPrice())
+
+	// First add a matching buy limit order to ensure the market sell can execute
+	matchBuyOrder, err := NewLimitOrder("match-buy-1", Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(105.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(matchBuyOrder)
+	require.NoError(t, err)
+
+	// Create a market order to trigger the stop price
+	triggerOrder, err := NewMarketOrder("trigger-sell", Sell, fpdecimal.FromFloat(0.1))
+	require.NoError(t, err)
+	require.NotNil(t, triggerOrder)
+
+	// Process the market order, this should trigger the stop order
+	done, err := book.Process(triggerOrder)
+	require.NoError(t, err)
+
+	// Debug: Print details about the market order execution
+	t.Logf("Market order processed: Qty=%s, Trades=%d", done.Processed, len(done.Trades))
+
+	// Debug: Check the prices in the stop book after trigger
+	pricesAfter := stopBook.Prices()
+	t.Logf("Stop prices after trigger: %v", pricesAfter)
+
+	// Verify stop order is removed from stop book after triggering
+	ordersAfterTrigger := stopBook.Orders(stopPrice)
+	t.Logf("Orders at stop price after trigger: %d", len(ordersAfterTrigger))
+	assert.Equal(t, 0, len(ordersAfterTrigger), "Stop order should be removed after triggering")
+}
+
+func TestIOCOrder(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Create orders
+	sell1, err1 := NewLimitOrder("sell1", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(100), GTC, "")
+	iocBuy1, err2 := NewLimitOrder("iocBuy1", Buy, fpdecimal.FromInt(5), fpdecimal.FromInt(100), IOC, "")
+	iocBuy2, err3 := NewLimitOrder("iocBuy2", Buy, fpdecimal.FromInt(15), fpdecimal.FromInt(100), IOC, "")
+	iocBuy3, err4 := NewLimitOrder("iocBuy3", Buy, fpdecimal.FromInt(5), fpdecimal.FromInt(99), IOC, "") // No match
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	require.NoError(t, err3)
+	require.NoError(t, err4)
+
+	// Process sell order
+	_, err := book.Process(sell1)
+	require.NoError(t, err)
+
+	// Process IOC Buy 1 (partial fill)
+	done1, err := book.Process(iocBuy1)
+	require.NoError(t, err)
+	assert.Equal(t, fpdecimal.FromInt(5), done1.Processed)
+	assert.Equal(t, fpdecimal.Zero, done1.Left)
+	assert.Equal(t, 2, len(done1.Trades)) // 1 taker + 1 maker match
+
+	// Process IOC Buy 2 (fills remaining sell1, rest canceled)
+	done2, err := book.Process(iocBuy2)
+	require.NoError(t, err)
+	assert.Equal(t, fpdecimal.FromInt(5), done2.Processed) // Only 5 left from sell1
+	assert.Equal(t, fpdecimal.FromInt(10), done2.Left)     // 15 - 5 = 10 left/canceled
+	assert.Equal(t, 2, len(done2.Trades))                  // 1 taker + 1 maker match
+
+	// Process IOC Buy 3 (no match, fully canceled)
+	done3, err := book.Process(iocBuy3)
+	require.NoError(t, err)
+	assert.Equal(t, fpdecimal.Zero, done3.Processed)
+	assert.Equal(t, fpdecimal.FromInt(5), done3.Left)
+	assert.Equal(t, 1, len(done3.Trades)) // Only taker order, no matches
+}
+
 func TestFOKLimitOrder(t *testing.T) {
-	// ... existing TestFOKLimitOrder code ...
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Create orders
+	sell1, err1 := NewLimitOrder("sell1", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(100), GTC, "")
+	fokBuy1, err2 := NewLimitOrder("fokBuy1", Buy, fpdecimal.FromInt(10), fpdecimal.FromInt(100), FOK, "") // Should fill exactly
+	fokBuy2, err3 := NewLimitOrder("fokBuy2", Buy, fpdecimal.FromInt(15), fpdecimal.FromInt(100), FOK, "") // Should cancel (needs more than available)
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	require.NoError(t, err3)
+
+	// Process sell order
+	_, err := book.Process(sell1)
+	require.NoError(t, err)
+
+	// Process FOK Buy 1 (Success)
+	done1, err := book.Process(fokBuy1)
+	require.NoError(t, err)
+	assert.Equal(t, fpdecimal.FromInt(10), done1.Processed)
+	assert.Equal(t, fpdecimal.Zero, done1.Left)
+	assert.Equal(t, 2, len(done1.Trades)) // 1 taker + 1 maker match
+
+	// Check sell order is gone
+	assert.Nil(t, backend.GetOrder("sell1"))
+
+	// Re-add sell order for next test
+	sell2, err := NewLimitOrder("sell2", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(100), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sell2)
+	require.NoError(t, err)
+
+	// Process FOK Buy 2 (Fail/Cancel)
+	done2, err := book.Process(fokBuy2)
+	require.NoError(t, err)                            // FOK failure isn't an 'error' in Process, it modifies 'done'
+	assert.Equal(t, fpdecimal.Zero, done2.Processed)   // No fill
+	assert.Equal(t, fpdecimal.FromInt(15), done2.Left) // Original quantity left/canceled
+	assert.Equal(t, 1, len(done2.Trades))              // Only taker order, no matches
+	assert.Nil(t, backend.GetOrder("fokBuy2"))         // FOK order itself should be removed
+
+	// Check sell order is untouched
+	sell2Order := backend.GetOrder("sell2")
+	require.NotNil(t, sell2Order)
+	assert.Equal(t, fpdecimal.FromInt(10), sell2Order.Quantity())
 }
 
 // TestPriceTimePriority verifies that orders are matched based on price first, then time.
@@ -542,13 +775,18 @@ func TestPriceTimePriority(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Setup sell side with multiple price levels and orders
-	// Sell orders: sell1 (10 @ 100), sell2 (5 @ 100), sell3 (10 @ 105)
-	sellOrders := []*Order{
-		NewLimitOrder("sell1", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(100), GTC, ""),
-		NewLimitOrder("sell2", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(100), GTC, ""), // Same price as sell1, but added later
-		NewLimitOrder("sell3", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(105), GTC, ""),
+	sellOrderPtrs := []*Order{}
+	ids := []string{"sell1", "sell2", "sell3"}
+	qtys := []int{10, 5, 10}
+	prices := []int{100, 100, 105}
+
+	for i := range ids {
+		o, err := NewLimitOrder(ids[i], Sell, fpdecimal.FromInt(int64(qtys[i])), fpdecimal.FromInt(int64(prices[i])), GTC, "")
+		require.NoError(t, err)
+		sellOrderPtrs = append(sellOrderPtrs, o)
 	}
-	for _, order := range sellOrders {
+
+	for _, order := range sellOrderPtrs {
 		_, err := book.Process(order)
 		if err != nil {
 			t.Fatalf("Failed to process setup order %s: %v", order.ID(), err)
@@ -557,7 +795,8 @@ func TestPriceTimePriority(t *testing.T) {
 
 	// Create a buy order that should match sell1 and part of sell2
 	buyQty := fpdecimal.FromInt(12)
-	buyOrder := NewLimitOrder("buy1", Buy, buyQty, fpdecimal.FromInt(100), GTC, "") // Price matches sell1 & sell2
+	buyOrder, err := NewLimitOrder("buy1", Buy, buyQty, fpdecimal.FromInt(100), GTC, "") // Price matches sell1 & sell2
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buyOrder)
@@ -634,15 +873,18 @@ func TestMultiLevelMatching(t *testing.T) {
 	book := NewOrderBook(backend)
 
 	// Setup sell side with multiple price levels
-	// sell1: 5 @ 100
-	// sell2: 5 @ 101
-	// sell3: 5 @ 102
-	sellOrders := []*Order{
-		NewLimitOrder("sell1", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(100), GTC, ""),
-		NewLimitOrder("sell2", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(101), GTC, ""),
-		NewLimitOrder("sell3", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(102), GTC, ""),
+	sellOrderPtrs := []*Order{}
+	ids := []string{"sell1", "sell2", "sell3"}
+	qtys := []int{5, 5, 5}
+	prices := []int{100, 101, 102}
+
+	for i := range ids {
+		o, err := NewLimitOrder(ids[i], Sell, fpdecimal.FromInt(int64(qtys[i])), fpdecimal.FromInt(int64(prices[i])), GTC, "")
+		require.NoError(t, err)
+		sellOrderPtrs = append(sellOrderPtrs, o)
 	}
-	for _, order := range sellOrders {
+
+	for _, order := range sellOrderPtrs {
 		_, err := book.Process(order)
 		if err != nil {
 			t.Fatalf("Failed to process setup order %s: %v", order.ID(), err)
@@ -650,8 +892,9 @@ func TestMultiLevelMatching(t *testing.T) {
 	}
 
 	// Create a buy order that consumes sell1 and sell2 completely, and part of sell3
-	buyQty := fpdecimal.FromInt(12)                                                 // Needs 12 total
-	buyOrder := NewLimitOrder("buy1", Buy, buyQty, fpdecimal.FromInt(102), GTC, "") // Limit price allows matching up to 102
+	buyQty := fpdecimal.FromInt(12)                                                      // Needs 12 total
+	buyOrder, err := NewLimitOrder("buy1", Buy, buyQty, fpdecimal.FromInt(102), GTC, "") // Limit price allows matching up to 102
+	require.NoError(t, err)
 
 	// Process the buy order
 	done, err := book.Process(buyOrder)
@@ -725,7 +968,8 @@ func TestMarketOrderNoLiquidity(t *testing.T) {
 	// Attempt to create a buy market order when there are no sell orders
 	buyOrderID := "buy-market-no-liq"
 	buyQty := fpdecimal.FromFloat(5.0)
-	buyOrder := NewMarketOrder(buyOrderID, Buy, buyQty)
+	buyOrder, err := NewMarketOrder(buyOrderID, Buy, buyQty)
+	require.NoError(t, err)
 
 	// Process the buy market order
 	done, err := book.Process(buyOrder)
@@ -775,20 +1019,22 @@ func TestCancelPendingStopOrder(t *testing.T) {
 	stopPrice := fpdecimal.FromInt(105)
 	limitPrice := fpdecimal.FromInt(104)
 	qty := fpdecimal.FromInt(10)
-	stopOrder := NewStopLimitOrder(stopOrderID, Buy, qty, limitPrice, stopPrice, "")
+	stopOrder, err := NewStopLimitOrder(stopOrderID, Buy, qty, limitPrice, stopPrice, "")
+	require.NoError(t, err)
 
 	// Process the stop order (places it in the stop book)
-	_, err := book.Process(stopOrder)
+	_, err = book.Process(stopOrder)
 	if err != nil {
 		t.Fatalf("Failed to process stop order: %v", err)
 	}
 
-	// Verify it's in the backend store and stop book (mock)
+	// Verify it's in the backend store and stop book
 	if backend.GetOrder(stopOrderID) == nil {
 		t.Fatalf("Expected stop order %s to be stored in backend", stopOrderID)
 	}
-	stopBook, ok := backend.GetStopBook().([]*Order)
-	if !ok || len(stopBook) != 1 || stopBook[0].ID() != stopOrderID {
+	stopBook := backend.GetStopBook().(*mockStopBook)
+	orders := stopBook.Orders(stopPrice)
+	if len(orders) != 1 || orders[0].ID() != stopOrderID {
 		t.Fatalf("Expected stop order %s to be in the stop book", stopOrderID)
 	}
 
@@ -813,10 +1059,11 @@ func TestCancelPendingStopOrder(t *testing.T) {
 		t.Errorf("Expected stop order %s to be removed from the backend store after cancellation", stopOrderID)
 	}
 
-	// 3. Verify the order is removed from the stop book (mock)
-	stopBookAfterCancel, ok := backend.GetStopBook().([]*Order)
-	if !ok || len(stopBookAfterCancel) != 0 {
-		t.Errorf("Expected stop book to be empty after cancellation, got %d orders", len(stopBookAfterCancel))
+	// 3. Verify the order is removed from the stop book
+	stopBookAfterCancel := backend.GetStopBook().(*mockStopBook)
+	ordersAfterCancel := stopBookAfterCancel.Orders(stopPrice)
+	if len(ordersAfterCancel) != 0 {
+		t.Errorf("Expected stop book to be empty after cancellation, got %d orders", len(ordersAfterCancel))
 	}
 
 	// 4. Verify the order is not on the main bid/ask sides
@@ -840,8 +1087,9 @@ func TestDuplicateOrderID(t *testing.T) {
 	qty := fpdecimal.FromInt(10)
 
 	// Process the first order
-	order1 := NewLimitOrder(orderID, Buy, qty, price, GTC, "")
-	_, err := book.Process(order1)
+	order1, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(order1)
 	if err != nil {
 		t.Fatalf("Processing first order failed unexpectedly: %v", err)
 	}
@@ -852,22 +1100,17 @@ func TestDuplicateOrderID(t *testing.T) {
 	}
 
 	// Process a second order with the same ID
-	order2 := NewLimitOrder(orderID, Sell, qty, price.Add(fpdecimal.FromInt(1)), GTC, "") // Different details but same ID
+	order2, err := NewLimitOrder(orderID, Sell, qty, price.Add(fpdecimal.FromInt(1)), GTC, "") // Different details but same ID
+	require.NoError(t, err)
 	done, err := book.Process(order2)
 
 	// --- Verification ---
 
 	// 1. Expect ErrOrderExists
-	if err == nil {
-		t.Errorf("Expected an error when processing duplicate order ID, got nil")
-	} else if err != ErrOrderExists {
-		t.Errorf("Expected ErrOrderExists, got %v", err)
-	}
+	require.ErrorIs(t, err, ErrOrderExists)
 
 	// 2. Expect nil done object
-	if done != nil {
-		t.Errorf("Expected nil done object on error, got %+v", done)
-	}
+	assert.Nil(t, done)
 
 	// 3. Verify the original order is still in the backend, unchanged
 	originalOrder := backend.GetOrder(orderID)
@@ -877,4 +1120,141 @@ func TestDuplicateOrderID(t *testing.T) {
 		t.Errorf("Original order was modified. Expected Side=Buy, Qty=%s. Got Side=%s, Qty=%s",
 			qty, originalOrder.Side(), originalOrder.Quantity())
 	}
+}
+
+func TestLimitOrderToOrderBook(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+	orderID := "test-order"
+	price := fpdecimal.FromFloat(100.0)
+	qty := fpdecimal.FromFloat(1.0)
+	order, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
+
+	_, err = book.Process(order)
+	require.NoError(t, err)
+
+	retrievedOrder := backend.GetOrder(orderID)
+	require.NotNil(t, retrievedOrder)
+	assert.Equal(t, orderID, retrievedOrder.ID())
+}
+
+func TestProcessFilledOrder(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Create and process a limit order
+	orderID := "order-1"
+	price := fpdecimal.FromFloat(100.0)
+	qty := fpdecimal.FromFloat(1.0)
+	order, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
+	_, err = book.Process(order)
+	require.NoError(t, err)
+
+	// Simulate the order being filled by modifying its quantity in the backend
+	filledOrder := backend.GetOrder(orderID)
+	require.NotNil(t, filledOrder)
+	filledOrder.DecreaseQuantity(qty)
+	backend.StoreOrder(filledOrder)
+
+	// Attempt to process the already filled order again
+	sameOrderAgain, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, sameOrderAgain)
+
+	_, err = book.Process(sameOrderAgain)
+	assert.Error(t, err, "Expected an error when processing an already filled order")
+}
+
+func TestIOCMarketOrderPartialFill(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Add a sell limit order
+	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sellOrder)
+	require.NoError(t, err)
+
+	// Create an IOC buy market order for more than available
+	iocBuyOrder, err := NewMarketOrder("buy-ioc", Buy, fpdecimal.FromFloat(10.0))
+	require.NoError(t, err)
+
+	// Process the IOC buy order
+	done, err := book.Process(iocBuyOrder)
+	require.NoError(t, err)
+	require.NotNil(t, done)
+
+	// Assert partial fill and cancellation of the rest
+	assert.True(t, done.Processed.Equal(fpdecimal.FromFloat(5.0)), "Expected processed quantity 5.0, got %s", done.Processed)
+	assert.True(t, done.Left.Equal(fpdecimal.Zero), "Expected left quantity 0 for IOC market order after matching")
+
+	// Verify the IOC order is not in the book
+	assert.Nil(t, backend.GetOrder("buy-ioc"), "IOC order should not remain in the book")
+}
+
+func TestFOKLimitOrderFullFill(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Add a sell limit order
+	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sellOrder)
+	require.NoError(t, err)
+
+	// Create an FOK buy limit order that can be fully filled
+	fokBuyPrice := fpdecimal.FromFloat(10.0)
+	fokBuyQty := fpdecimal.FromFloat(5.0)
+	fokBuyOrder, err := NewLimitOrder("buy-fok", Buy, fokBuyQty, fokBuyPrice, FOK, "")
+	require.NoError(t, err)
+
+	// Process the FOK buy order
+	done, err := book.Process(fokBuyOrder)
+	require.NoError(t, err)
+	require.NotNil(t, done)
+
+	// Assert full fill
+	assert.True(t, done.Processed.Equal(fokBuyQty), "Expected processed quantity %s, got %s", fokBuyQty, done.Processed)
+	assert.True(t, done.Left.Equal(fpdecimal.Zero), "Expected left quantity 0 for fully filled FOK order")
+
+	// Verify the FOK order is not in the book (fully filled)
+	assert.Nil(t, backend.GetOrder("buy-fok"), "Fully filled FOK order should not remain in the book")
+}
+
+func TestFOKLimitOrderCancelled(t *testing.T) {
+	backend := newMockBackend()
+	book := NewOrderBook(backend)
+
+	// Add a sell limit order
+	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "")
+	require.NoError(t, err)
+	_, err = book.Process(sellOrder)
+	require.NoError(t, err)
+
+	// Create an FOK buy limit order that cannot be fully filled
+	fokBuyPrice := fpdecimal.FromFloat(10.0)
+	fokBuyQty := fpdecimal.FromFloat(5.0) // Request more than available
+	fokBuyOrder, err := NewLimitOrder("buy-fok-cancel", Buy, fokBuyQty, fokBuyPrice, FOK, "")
+	require.NoError(t, err)
+
+	// Process the FOK buy order
+	done, err := book.Process(fokBuyOrder)
+	require.NoError(t, err)
+	require.NotNil(t, done)
+
+	// Assert cancellation (zero processed, full quantity left)
+	assert.True(t, done.Processed.Equal(fpdecimal.Zero), "Expected processed quantity 0 for cancelled FOK order, got %s", done.Processed)
+	assert.True(t, done.Left.Equal(fokBuyQty), "Expected left quantity to be original quantity for cancelled FOK order, got %s", done.Left)
+
+	// Verify the FOK order is not in the book (cancelled)
+	assert.Nil(t, backend.GetOrder("buy-fok-cancel"), "Cancelled FOK order should not remain in the book")
+
+	// Verify the sell order was unaffected
+	unaffectedSellOrder := backend.GetOrder("sell-1")
+	require.NotNil(t, unaffectedSellOrder)
+	assert.True(t, unaffectedSellOrder.Quantity().Equal(fpdecimal.FromFloat(3.0)), "Sell order quantity should be unaffected")
 }

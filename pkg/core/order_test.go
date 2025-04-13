@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/nikolaydubina/fpdecimal"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSideString(t *testing.T) {
@@ -31,7 +33,9 @@ func TestNewMarketOrder(t *testing.T) {
 	orderID := "test-123"
 	quantity := fpdecimal.FromFloat(10.5)
 
-	order := NewMarketOrder(orderID, Buy, quantity)
+	order, err := NewMarketOrder(orderID, Buy, quantity)
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	if order.ID() != orderID {
 		t.Errorf("Expected ID %s, got %s", orderID, order.ID())
@@ -78,7 +82,9 @@ func TestNewMarketQuoteOrder(t *testing.T) {
 	orderID := "test-123"
 	quantity := fpdecimal.FromFloat(10.5)
 
-	order := NewMarketQuoteOrder(orderID, Buy, quantity)
+	order, err := NewMarketQuoteOrder(orderID, Buy, quantity)
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	if !order.IsQuote() {
 		t.Error("Expected order to be quote")
@@ -94,7 +100,9 @@ func TestNewLimitOrder(t *testing.T) {
 	quantity := fpdecimal.FromFloat(10.5)
 	price := fpdecimal.FromFloat(100.0)
 
-	order := NewLimitOrder(orderID, Sell, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Sell, quantity, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	if order.ID() != orderID {
 		t.Errorf("Expected ID %s, got %s", orderID, order.ID())
@@ -127,7 +135,9 @@ func TestNewStopLimitOrder(t *testing.T) {
 	price := fpdecimal.FromFloat(100.0)
 	stopPrice := fpdecimal.FromFloat(105.0)
 
-	order := NewStopLimitOrder(orderID, Sell, quantity, price, stopPrice, "")
+	order, err := NewStopLimitOrder(orderID, Sell, quantity, price, stopPrice, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	if !order.IsStopOrder() {
 		t.Error("Expected IsStopOrder to be true")
@@ -143,7 +153,9 @@ func TestOrderJSON(t *testing.T) {
 	quantity := fpdecimal.FromFloat(10.5)
 	price := fpdecimal.FromFloat(100.0)
 
-	order := NewLimitOrder(orderID, Buy, quantity, price, GTC, "oco-456")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "oco-456")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	// Test Marshal
 	data, err := json.Marshal(order)
@@ -184,7 +196,9 @@ func TestOrderSettersAndGetters(t *testing.T) {
 	quantity := fpdecimal.FromFloat(10.5)
 	price := fpdecimal.FromFloat(100.0)
 
-	order := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	// Test cancel
 	if order.IsCanceled() {
@@ -238,7 +252,9 @@ func TestActivateStopOrder(t *testing.T) {
 	price := fpdecimal.FromFloat(100.0)
 	stopPrice := fpdecimal.FromFloat(105.0)
 
-	order := NewStopLimitOrder(orderID, Sell, quantity, price, stopPrice, "")
+	order, err := NewStopLimitOrder(orderID, Sell, quantity, price, stopPrice, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 
 	if !order.IsStopOrder() {
 		t.Error("Order should be a stop order initially")
@@ -257,6 +273,10 @@ func TestActivateStopOrder(t *testing.T) {
 	if !order.StopPrice().Equal(fpdecimal.Zero) {
 		t.Errorf("Expected stop price to be 0 after activation, got %v", order.StopPrice())
 	}
+
+	// Test activating non-stop order (should panic)
+	limitOrder, _ := NewLimitOrder("limit-activate", Buy, quantity, price, GTC, "")
+	assert.PanicsWithValue(t, "GetOrder isn't Stop", func() { limitOrder.ActivateStopOrder() })
 }
 
 func TestToSimple(t *testing.T) {
@@ -264,7 +284,9 @@ func TestToSimple(t *testing.T) {
 	quantity := fpdecimal.FromFloat(10.5)
 	price := fpdecimal.FromFloat(100.0)
 
-	order := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	require.NoError(t, err)
+	require.NotNil(t, order)
 	order.SetMaker()
 
 	simple := order.ToSimple()
@@ -290,8 +312,8 @@ func TestToSimple(t *testing.T) {
 	}
 }
 
-// TestOrderConstructors_PanicConditions verifies that constructors panic on invalid input.
-func TestOrderConstructors_PanicConditions(t *testing.T) {
+// TestOrderConstructors_ErrorConditions verifies that constructors return errors on invalid input.
+func TestOrderConstructors_ErrorConditions(t *testing.T) {
 	validID := "test-id"
 	validSide := Buy
 	validQty := fpdecimal.FromInt(1)
@@ -305,50 +327,48 @@ func TestOrderConstructors_PanicConditions(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		constructor func()
-		expectPanic error // The error expected in the panic
+		constructor func() (*Order, error)
+		expectError error
 	}{
-		// Market Order Panics
-		{"MarketZeroQty", func() { NewMarketOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
-		{"MarketNegQty", func() { NewMarketOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
-		{"MarketQuoteZeroQty", func() { NewMarketQuoteOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
-		{"MarketQuoteNegQty", func() { NewMarketQuoteOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
+		// Market Order Errors
+		{"MarketZeroQty", func() (*Order, error) { return NewMarketOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
+		{"MarketNegQty", func() (*Order, error) { return NewMarketOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
+		{"MarketQuoteZeroQty", func() (*Order, error) { return NewMarketQuoteOrder(validID, validSide, zeroQty) }, ErrInvalidQuantity},
+		{"MarketQuoteNegQty", func() (*Order, error) { return NewMarketQuoteOrder(validID, validSide, negQty) }, ErrInvalidQuantity},
 
-		// Limit Order Panics
-		{"LimitZeroQty", func() { NewLimitOrder(validID, validSide, zeroQty, validPrice, GTC, "") }, ErrInvalidQuantity},
-		{"LimitNegQty", func() { NewLimitOrder(validID, validSide, negQty, validPrice, GTC, "") }, ErrInvalidQuantity},
-		{"LimitZeroPrice", func() { NewLimitOrder(validID, validSide, validQty, zeroPrice, GTC, "") }, ErrInvalidPrice},
-		{"LimitNegPrice", func() { NewLimitOrder(validID, validSide, validQty, negPrice, GTC, "") }, ErrInvalidPrice},
-		{"LimitInvalidTIF", func() { NewLimitOrder(validID, validSide, validQty, validPrice, invalidTIF, "") }, ErrInvalidTif},
+		// Limit Order Errors
+		{"LimitZeroQty", func() (*Order, error) { return NewLimitOrder(validID, validSide, zeroQty, validPrice, GTC, "") }, ErrInvalidQuantity},
+		{"LimitNegQty", func() (*Order, error) { return NewLimitOrder(validID, validSide, negQty, validPrice, GTC, "") }, ErrInvalidQuantity},
+		{"LimitZeroPrice", func() (*Order, error) { return NewLimitOrder(validID, validSide, validQty, zeroPrice, GTC, "") }, ErrInvalidPrice},
+		{"LimitNegPrice", func() (*Order, error) { return NewLimitOrder(validID, validSide, validQty, negPrice, GTC, "") }, ErrInvalidPrice},
+		{"LimitInvalidTIF", func() (*Order, error) { return NewLimitOrder(validID, validSide, validQty, validPrice, invalidTIF, "") }, ErrInvalidTif},
 
-		// Stop-Limit Order Panics
-		{"StopLimitZeroQty", func() { NewStopLimitOrder(validID, validSide, zeroQty, validPrice, validStopPrice, "") }, ErrInvalidQuantity},
-		{"StopLimitNegQty", func() { NewStopLimitOrder(validID, validSide, negQty, validPrice, validStopPrice, "") }, ErrInvalidQuantity},
-		{"StopLimitZeroPrice", func() { NewStopLimitOrder(validID, validSide, validQty, zeroPrice, validStopPrice, "") }, ErrInvalidPrice},
-		{"StopLimitNegPrice", func() { NewStopLimitOrder(validID, validSide, validQty, negPrice, validStopPrice, "") }, ErrInvalidPrice},
-		{"StopLimitZeroStopPrice", func() { NewStopLimitOrder(validID, validSide, validQty, validPrice, zeroPrice, "") }, ErrInvalidPrice},
-		{"StopLimitNegStopPrice", func() { NewStopLimitOrder(validID, validSide, validQty, validPrice, negPrice, "") }, ErrInvalidPrice},
+		// Stop-Limit Order Errors
+		{"StopLimitZeroQty", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, zeroQty, validPrice, validStopPrice, "")
+		}, ErrInvalidQuantity},
+		{"StopLimitNegQty", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, negQty, validPrice, validStopPrice, "")
+		}, ErrInvalidQuantity},
+		{"StopLimitZeroPrice", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, validQty, zeroPrice, validStopPrice, "")
+		}, ErrInvalidPrice},
+		{"StopLimitNegPrice", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, validQty, negPrice, validStopPrice, "")
+		}, ErrInvalidPrice},
+		{"StopLimitZeroStopPrice", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, validQty, validPrice, zeroPrice, "")
+		}, ErrInvalidPrice},
+		{"StopLimitNegStopPrice", func() (*Order, error) {
+			return NewStopLimitOrder(validID, validSide, validQty, validPrice, negPrice, "")
+		}, ErrInvalidPrice},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Errorf("Expected constructor to panic, but it did not")
-					return
-				}
-				// Check if the recovered panic value matches the expected error
-				if recoveredErr, ok := r.(error); ok {
-					if recoveredErr != tt.expectPanic {
-						t.Errorf("Expected panic with error '%v', but got '%v'", tt.expectPanic, recoveredErr)
-					}
-				} else {
-					t.Errorf("Expected panic with an error value, but got panic with type %T: %v", r, r)
-				}
-			}()
-			// Execute the constructor that is expected to panic
-			tt.constructor()
+			order, err := tt.constructor()
+			assert.ErrorIs(t, err, tt.expectError, "Expected specific error")
+			assert.Nil(t, order, "Expected nil order on error")
 		})
 	}
 }

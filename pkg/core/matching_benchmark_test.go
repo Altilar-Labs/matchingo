@@ -4,269 +4,198 @@ import (
 	"fmt"
 	"testing"
 
+	// No core import needed here
+	// "github.com/erain9/matchingo/pkg/core" // Removed import
 	"github.com/nikolaydubina/fpdecimal"
+	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkMarketOrderMatching tests the performance of market order matching
-func BenchmarkMarketOrderMatching(b *testing.B) {
-	// Create a new order book with an in-memory backend
-	backend := newMockBackend()
+// Helper function for benchmarks
+func benchmarkMatchLimitOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
 	book := NewOrderBook(backend)
-
-	// Prepare the order book with sell orders at different price levels
-	// We'll create a realistic orderbook with orders at various price points
-	for i := 0; i < 100; i++ {
-		sellID := fmt.Sprintf("sell-%d", i)
-		// Create price points from 100.00 to 110.00
-		price := fpdecimal.FromFloat(100.0 + float64(i)*0.1)
-		// Create varying quantity sizes
-		quantity := fpdecimal.FromFloat(1.0 + float64(i%5))
-
-		sellOrder := NewLimitOrder(sellID, Sell, quantity, price, GTC, "")
-		_, _ = book.Process(sellOrder)
+	// Pre-fill the book
+	for i := 0; i < numOrders; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(o)
+		require.NoError(b, err)
 	}
 
-	// Reset the timer to not include setup time
 	b.ResetTimer()
-
-	// Run the benchmark
-	for i := 0; i < b.N; i++ {
-		// Create a buy market order
-		buyID := fmt.Sprintf("buy-market-%d", i)
-		buyQty := fpdecimal.FromFloat(3.0) // Small enough to not deplete the book
-
-		buyOrder := NewMarketOrder(buyID, Buy, buyQty)
-		_, _ = book.Process(buyOrder)
-
-		// We don't need to restore the book since we're not depleting it
+	for n := 0; n < b.N; n++ {
+		id := fmt.Sprintf("bench-buy-%d", n)
+		price := fpdecimal.FromInt(10000) // Match the lowest sell price
+		qty := fpdecimal.FromInt(1)
+		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }
 
-// BenchmarkLimitOrderMatching tests the performance of limit order matching
-func BenchmarkLimitOrderMatching(b *testing.B) {
-	// Create a new order book with an in-memory backend
-	backend := newMockBackend()
+func benchmarkMatchMarketOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
 	book := NewOrderBook(backend)
-
-	// Prepare the order book with sell orders at different price levels
-	for i := 0; i < 100; i++ {
-		sellID := fmt.Sprintf("sell-%d", i)
-		price := fpdecimal.FromFloat(100.0 + float64(i)*0.1)
-		quantity := fpdecimal.FromFloat(1.0 + float64(i%5))
-
-		sellOrder := NewLimitOrder(sellID, Sell, quantity, price, GTC, "")
-		_, _ = book.Process(sellOrder)
+	// Pre-fill the book
+	for i := 0; i < numOrders; i++ {
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(o)
+		require.NoError(b, err)
 	}
 
-	// Reset the timer to not include setup time
 	b.ResetTimer()
-
-	// Run the benchmark
-	for i := 0; i < b.N; i++ {
-		// Create a buy limit order that will match with some sell orders
-		buyID := fmt.Sprintf("buy-limit-%d", i)
-		buyPrice := fpdecimal.FromFloat(100.5) // Will match with some sells
-		buyQty := fpdecimal.FromFloat(2.0)
-
-		buyOrder := NewLimitOrder(buyID, Buy, buyQty, buyPrice, GTC, "")
-		_, _ = book.Process(buyOrder)
+	for n := 0; n < b.N; n++ {
+		id := fmt.Sprintf("bench-buy-%d", n)
+		qty := fpdecimal.FromInt(1)
+		order, err := NewMarketOrder(id, Buy, qty)
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
 	}
 }
 
-// BenchmarkMultiLevelMatching tests matching across multiple price levels
-func BenchmarkMultiLevelMatching(b *testing.B) {
-	// Create a new order book with an in-memory backend
-	backend := newMockBackend()
+func benchmarkAddLimitOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
 	book := NewOrderBook(backend)
+	// Pre-fill if needed (e.g., to test adding to a non-empty book)
+	// For add benchmark, maybe start empty?
 
-	// Prepare the order book with sell orders at different price levels
-	// Create a more realistic order book with dense price levels
-	for i := 0; i < 50; i++ {
-		// Create multiple orders at each price level
-		for j := 0; j < 5; j++ {
-			sellID := fmt.Sprintf("sell-%d-%d", i, j)
-			price := fpdecimal.FromFloat(100.0 + float64(i)*0.1)
-			quantity := fpdecimal.FromFloat(1.0)
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		id := fmt.Sprintf("bench-add-%d", n)
+		price := fpdecimal.FromInt(int64(10000 + n)) // Unique price to ensure addition
+		qty := fpdecimal.FromInt(1)
+		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(order)
+		require.NoError(b, err)
+	}
+}
 
-			sellOrder := NewLimitOrder(sellID, Sell, quantity, price, GTC, "")
-			_, _ = book.Process(sellOrder)
-		}
+func benchmarkCancelLimitOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
+	book := NewOrderBook(backend)
+	orderIDs := make([]string, numOrders)
+	// Pre-fill the book
+	for i := 0; i < numOrders; i++ {
+		id := fmt.Sprintf("setup-cancel-%d", i)
+		orderIDs[i] = id
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(o)
+		require.NoError(b, err)
 	}
 
-	// Reset the timer to not include setup time
+	idx := 0
 	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		cancelID := orderIDs[idx%numOrders]
+		book.CancelOrder(cancelID)
+		idx++
 
-	// Run the benchmark
-	for i := 0; i < b.N; i++ {
-		// Create a buy order that will match across multiple price levels
-		buyID := fmt.Sprintf("buy-multi-%d", i)
-		buyPrice := fpdecimal.FromFloat(102.0) // Will match with many sells
-		buyQty := fpdecimal.FromFloat(10.0)    // Will consume multiple levels
-
-		buyOrder := NewLimitOrder(buyID, Buy, buyQty, buyPrice, GTC, "")
-		_, _ = book.Process(buyOrder)
-
-		// Restore the book for the next iteration
-		if i < b.N-1 {
-			b.StopTimer()
-			// Add back the orders that were consumed
-			for j := 0; j < 10; j++ {
-				restoreID := fmt.Sprintf("restore-%d-%d", i, j)
-				price := fpdecimal.FromFloat(100.0 + float64(j)*0.1)
-				quantity := fpdecimal.FromFloat(1.0)
-
-				restoreOrder := NewLimitOrder(restoreID, Sell, quantity, price, GTC, "")
-				_, _ = book.Process(restoreOrder)
-			}
-			b.StartTimer()
+		// Re-add an order to keep the book size roughly constant
+		if n < numOrders { // Only re-add if we have space (simplified logic)
+			reAddID := fmt.Sprintf("re-add-%d", n)
+			price := fpdecimal.FromInt(int64(20000 + n))
+			qty := fpdecimal.FromInt(1)
+			order, err := NewLimitOrder(reAddID, Sell, qty, price, GTC, "")
+			require.NoError(b, err)
+			_, err = book.Process(order)
+			require.NoError(b, err)
 		}
 	}
 }
 
-// BenchmarkHighFrequencyMatching tests high frequency order matching
-func BenchmarkHighFrequencyMatching(b *testing.B) {
-	// Create a new order book with an in-memory backend
-	backend := newMockBackend()
+func benchmarkGetOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
 	book := NewOrderBook(backend)
-
-	// Prepare the order book with both buy and sell orders
-	// Adding buy orders at lower prices
-	for i := 0; i < 50; i++ {
-		buyID := fmt.Sprintf("buy-book-%d", i)
-		price := fpdecimal.FromFloat(99.0 - float64(i)*0.1)
-		quantity := fpdecimal.FromFloat(1.0)
-
-		buyOrder := NewLimitOrder(buyID, Buy, quantity, price, GTC, "")
-		_, _ = book.Process(buyOrder)
+	orderIDs := make([]string, numOrders)
+	// Pre-fill the book
+	for i := 0; i < numOrders; i++ {
+		id := fmt.Sprintf("setup-get-%d", i)
+		orderIDs[i] = id
+		price := fpdecimal.FromInt(int64(10000 + i))
+		qty := fpdecimal.FromInt(1)
+		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "")
+		require.NoError(b, err)
+		_, err = book.Process(o)
+		require.NoError(b, err)
 	}
 
-	// Adding sell orders at higher prices
-	for i := 0; i < 50; i++ {
-		sellID := fmt.Sprintf("sell-book-%d", i)
-		price := fpdecimal.FromFloat(101.0 + float64(i)*0.1)
-		quantity := fpdecimal.FromFloat(1.0)
-
-		sellOrder := NewLimitOrder(sellID, Sell, quantity, price, GTC, "")
-		_, _ = book.Process(sellOrder)
-	}
-
-	// Reset the timer to not include setup time
+	idx := 0
 	b.ResetTimer()
-
-	// Run the benchmark - alternating between buy and sell orders
-	for i := 0; i < b.N; i++ {
-		if i%2 == 0 {
-			// Create a buy order at market price
-			buyID := fmt.Sprintf("buy-hf-%d", i)
-			buyQty := fpdecimal.FromFloat(1.0)
-
-			buyOrder := NewMarketOrder(buyID, Buy, buyQty)
-			_, _ = book.Process(buyOrder)
-
-			// Restore a sell order
-			if i < b.N-1 {
-				b.StopTimer()
-				restoreID := fmt.Sprintf("restore-sell-%d", i)
-				price := fpdecimal.FromFloat(101.0)
-				quantity := fpdecimal.FromFloat(1.0)
-
-				restoreOrder := NewLimitOrder(restoreID, Sell, quantity, price, GTC, "")
-				_, _ = book.Process(restoreOrder)
-				b.StartTimer()
-			}
-		} else {
-			// Create a sell order at market price
-			sellID := fmt.Sprintf("sell-hf-%d", i)
-			sellQty := fpdecimal.FromFloat(1.0)
-
-			sellOrder := NewMarketOrder(sellID, Sell, sellQty)
-			_, _ = book.Process(sellOrder)
-
-			// Restore a buy order
-			if i < b.N-1 {
-				b.StopTimer()
-				restoreID := fmt.Sprintf("restore-buy-%d", i)
-				price := fpdecimal.FromFloat(99.0)
-				quantity := fpdecimal.FromFloat(1.0)
-
-				restoreOrder := NewLimitOrder(restoreID, Buy, quantity, price, GTC, "")
-				_, _ = book.Process(restoreOrder)
-				b.StartTimer()
-			}
-		}
+	for n := 0; n < b.N; n++ {
+		getID := orderIDs[idx%numOrders]
+		_ = book.GetOrder(getID)
+		idx++
 	}
 }
 
-// BenchmarkHeavyLoad tests order book under heavy load
-func BenchmarkHeavyLoad(b *testing.B) {
-	// Create a new order book with an in-memory backend
-	backend := newMockBackend()
-	book := NewOrderBook(backend)
+// --- Benchmark Execution --- (Add more backends as needed)
 
-	// Prepare a large order book with many price levels and orders
-	for i := 0; i < 500; i++ {
-		// Add sell orders
-		sellID := fmt.Sprintf("sell-load-%d", i)
-		sellPrice := fpdecimal.FromFloat(100.0 + float64(i%100)*0.1)
-		sellQty := fpdecimal.FromFloat(1.0 + float64(i%10))
+const (
+	benchOrdersSmall  = 100
+	benchOrdersMedium = 1000
+	benchOrdersLarge  = 10000
+)
 
-		sellOrder := NewLimitOrder(sellID, Sell, sellQty, sellPrice, GTC, "")
-		_, _ = book.Process(sellOrder)
+// Remove getMockBackend helper - benchmarks should use newMockBackend directly
+/*
+func getMockBackend() OrderBookBackend {
+	panic("Need access to core's mock backend constructor for benchmarks in core_test package")
+	// return newMockBackend() // Use directly if package is core
+}
+*/
 
-		// Add buy orders
-		buyID := fmt.Sprintf("buy-load-%d", i)
-		buyPrice := fpdecimal.FromFloat(99.0 - float64(i%100)*0.1)
-		buyQty := fpdecimal.FromFloat(1.0 + float64(i%10))
+func BenchmarkMemory_MatchLimitOrder_Small(b *testing.B) {
+	benchmarkMatchLimitOrder(b, newMockBackend(), benchOrdersSmall)
+}
+func BenchmarkMemory_MatchLimitOrder_Medium(b *testing.B) {
+	benchmarkMatchLimitOrder(b, newMockBackend(), benchOrdersMedium)
+}
+func BenchmarkMemory_MatchLimitOrder_Large(b *testing.B) {
+	benchmarkMatchLimitOrder(b, newMockBackend(), benchOrdersLarge)
+}
 
-		buyOrder := NewLimitOrder(buyID, Buy, buyQty, buyPrice, GTC, "")
-		_, _ = book.Process(buyOrder)
-	}
+func BenchmarkMemory_MatchMarketOrder_Small(b *testing.B) {
+	benchmarkMatchMarketOrder(b, newMockBackend(), benchOrdersSmall)
+}
+func BenchmarkMemory_MatchMarketOrder_Medium(b *testing.B) {
+	benchmarkMatchMarketOrder(b, newMockBackend(), benchOrdersMedium)
+}
+func BenchmarkMemory_MatchMarketOrder_Large(b *testing.B) {
+	benchmarkMatchMarketOrder(b, newMockBackend(), benchOrdersLarge)
+}
 
-	// Reset the timer to not include setup time
-	b.ResetTimer()
+func BenchmarkMemory_AddLimitOrder_Small(b *testing.B) {
+	benchmarkAddLimitOrder(b, newMockBackend(), benchOrdersSmall)
+}
+func BenchmarkMemory_AddLimitOrder_Medium(b *testing.B) {
+	benchmarkAddLimitOrder(b, newMockBackend(), benchOrdersMedium)
+}
+func BenchmarkMemory_AddLimitOrder_Large(b *testing.B) {
+	benchmarkAddLimitOrder(b, newMockBackend(), benchOrdersLarge)
+}
 
-	// Run the benchmark - large market orders
-	for i := 0; i < b.N; i++ {
-		// Alternate between buy and sell
-		side := Buy
-		if i%2 == 1 {
-			side = Sell
-		}
+func BenchmarkMemory_CancelLimitOrder_Small(b *testing.B) {
+	benchmarkCancelLimitOrder(b, newMockBackend(), benchOrdersSmall)
+}
+func BenchmarkMemory_CancelLimitOrder_Medium(b *testing.B) {
+	benchmarkCancelLimitOrder(b, newMockBackend(), benchOrdersMedium)
+}
+func BenchmarkMemory_CancelLimitOrder_Large(b *testing.B) {
+	benchmarkCancelLimitOrder(b, newMockBackend(), benchOrdersLarge)
+}
 
-		// Create a large order that will match with many orders
-		orderID := fmt.Sprintf("heavy-load-%d", i)
-		quantity := fpdecimal.FromFloat(50.0) // Match with many orders
-
-		order := NewMarketOrder(orderID, side, quantity)
-		_, _ = book.Process(order)
-
-		// Restore the book
-		if i < b.N-1 {
-			b.StopTimer()
-
-			// Add back a bunch of orders on the side that was just depleted
-			restoreSide := Sell
-			restoreBasePrice := 100.0
-			if side == Sell {
-				restoreSide = Buy
-				restoreBasePrice = 99.0
-			}
-
-			for j := 0; j < 50; j++ {
-				restoreID := fmt.Sprintf("restore-heavy-%d-%d", i, j)
-				var price fpdecimal.Decimal
-				if restoreSide == Sell {
-					price = fpdecimal.FromFloat(restoreBasePrice + float64(j%10)*0.1)
-				} else {
-					price = fpdecimal.FromFloat(restoreBasePrice - float64(j%10)*0.1)
-				}
-				quantity := fpdecimal.FromFloat(1.0 + float64(j%5))
-
-				restoreOrder := NewLimitOrder(restoreID, restoreSide, quantity, price, GTC, "")
-				_, _ = book.Process(restoreOrder)
-			}
-
-			b.StartTimer()
-		}
-	}
+func BenchmarkMemory_GetOrder_Small(b *testing.B) {
+	benchmarkGetOrder(b, newMockBackend(), benchOrdersSmall)
+}
+func BenchmarkMemory_GetOrder_Medium(b *testing.B) {
+	benchmarkGetOrder(b, newMockBackend(), benchOrdersMedium)
+}
+func BenchmarkMemory_GetOrder_Large(b *testing.B) {
+	benchmarkGetOrder(b, newMockBackend(), benchOrdersLarge)
 }

@@ -163,9 +163,9 @@ func (o *Order) UnmarshalJSON(data []byte) error {
 }
 
 // NewMarketOrder creates new constant object Order
-func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal) *Order {
+func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidQuantity)
+		return nil, ErrInvalidQuantity
 	}
 
 	return &Order{
@@ -176,13 +176,13 @@ func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal) *Orde
 		originalQty: quantity,
 		price:       fpdecimal.Zero,
 		canceled:    false,
-	}
+	}, nil
 }
 
 // NewMarketQuoteOrder creates new constant object Order, but quantity is in Quote mode
-func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal) *Order {
+func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidQuantity)
+		return nil, ErrInvalidQuantity
 	}
 
 	return &Order{
@@ -194,21 +194,21 @@ func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal) 
 		price:       fpdecimal.Zero,
 		canceled:    false,
 		isQuote:     true,
-	}
+	}, nil
 }
 
 // NewLimitOrder creates new constant object Order
-func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal, tif TIF, oco string) *Order {
+func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal, tif TIF, oco string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidQuantity)
+		return nil, ErrInvalidQuantity
 	}
 
 	if price.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidPrice)
+		return nil, ErrInvalidPrice
 	}
 
 	if tif != "" && tif != GTC && tif != FOK && tif != IOC {
-		panic(ErrInvalidTif)
+		return nil, ErrInvalidTif
 	}
 
 	return &Order{
@@ -221,17 +221,17 @@ func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal,
 		canceled:    false,
 		oco:         oco,
 		tif:         tif,
-	}
+	}, nil
 }
 
 // NewStopLimitOrder creates new constant object Order
-func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecimal.Decimal, oco string) *Order {
+func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecimal.Decimal, oco string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidQuantity)
+		return nil, ErrInvalidQuantity
 	}
 
 	if price.LessThanOrEqual(fpdecimal.Zero) || stop.LessThanOrEqual(fpdecimal.Zero) {
-		panic(ErrInvalidPrice)
+		return nil, ErrInvalidPrice
 	}
 
 	return &Order{
@@ -244,7 +244,7 @@ func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecima
 		canceled:    false,
 		stop:        stop,
 		oco:         oco,
-	}
+	}, nil
 }
 
 // ID returns OrderID field copy
@@ -372,4 +372,21 @@ func (o *Order) ToSimple() *TradeOrder {
 func (o *Order) String() string {
 	j, _ := o.ToSimple().MarshalJSON()
 	return string(j)
+}
+
+// ToLimitOrder converts a stop order to a limit order
+func (o *Order) ToLimitOrder() *Order {
+	return &Order{
+		id:          o.id,
+		orderType:   TypeLimit,
+		side:        o.side,
+		isQuote:     o.isQuote,
+		quantity:    o.quantity,
+		originalQty: o.originalQty,
+		price:       o.price,
+		canceled:    o.canceled,
+		role:        o.role,
+		tif:         o.tif,
+		oco:         o.oco,
+	}
 }
