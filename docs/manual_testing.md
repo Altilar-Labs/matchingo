@@ -222,6 +222,93 @@ Create a FOK order that should be fully matched or canceled:
 
 This order should be canceled as there's only 10.0 quantity available.
 
+### Monitoring Kafka Messages
+
+The Matchingo system sends messages to Kafka whenever orders are processed, matched, or their state changes. Monitoring these messages is crucial for understanding the system's behavior.
+
+#### 1. Install Kafka CLI Tools
+
+If you don't have the Kafka command-line tools, install them:
+
+```bash
+# For macOS using Homebrew
+brew install kafka
+
+# For Ubuntu/Debian
+apt-get install kafkacat
+```
+
+#### 2. Consume Messages from Kafka Topic
+
+To view messages sent to Kafka in real-time:
+
+```bash
+# Using the kafka-console-consumer script
+kafka-console-consumer --bootstrap-server localhost:9092 --topic test-msg-queue --from-beginning
+
+# Alternative using kafkacat
+kafkacat -C -b localhost:9092 -t test-msg-queue -f '%k: %s\n'
+```
+
+#### 3. What Information to Look For
+
+Messages sent to Kafka contain the following important information:
+
+- **OrderID**: The unique identifier of the processed order
+- **ExecutedQty**: The quantity that was executed in this operation
+- **RemainingQty**: The quantity remaining to be filled
+- **Trades**: Details of the trades that occurred, including:
+  - OrderID: ID of the order involved in the trade
+  - Role: Whether the order was a "MAKER" or "TAKER"
+  - Price: The price at which the trade executed
+  - Quantity: The quantity traded
+- **Canceled**: Array of order IDs that were canceled
+- **Activated**: Array of order IDs that were activated (for stop orders)
+- **Stored**: Whether the order is stored in the order book
+
+#### 4. Testing Sequence with Kafka Monitoring
+
+For a complete test with Kafka monitoring:
+
+1. Open a terminal and start consuming from the Kafka topic:
+   ```bash
+   kafka-console-consumer --bootstrap-server localhost:9092 --topic test-msg-queue --from-beginning
+   ```
+
+2. In another terminal, create an order book:
+   ```bash
+   ./bin/orderbook-client create-book --name=default --backend=memory
+   ```
+
+3. Create a buy limit order:
+   ```bash
+   ./bin/orderbook-client create-order default BUY LIMIT 10.0 100.0 order1
+   ```
+   - Observe the Kafka message showing the order was stored with zero filled quantity
+
+4. Create a matching sell order:
+   ```bash
+   ./bin/orderbook-client create-order default SELL LIMIT 5.0 100.0 order2
+   ```
+   - Observe the Kafka messages showing:
+     - The trade between order1 and order2
+     - Updated quantities for both orders
+     - order2 fully filled and order1 partially filled
+
+5. Complete the match with a market order:
+   ```bash
+   ./bin/orderbook-client create-order default SELL MARKET 5.0 0.0 order3
+   ```
+   - Observe the Kafka message showing the complete fill of order1
+
+#### 5. Interpreting Common Message Patterns
+
+- **New Limit Order**: Message shows `Stored: true` with zero executed quantity
+- **Filled Order**: Message shows `ExecutedQty` equal to the order quantity and `RemainingQty` of zero
+- **Partial Fill**: Message shows non-zero values for both `ExecutedQty` and `RemainingQty`
+- **Canceled Order**: The order ID appears in the `Canceled` array
+- **Activated Stop Order**: The order ID appears in the `Activated` array
+
 ## Cleanup
 
 When done testing, stop the Docker containers:
@@ -257,4 +344,10 @@ To check server logs:
 PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH" docker-compose logs -f server
 ```
 
-This shows real-time logs from the server, helpful for debugging issues. 
+This shows real-time logs from the server, helpful for debugging issues.
+
+### Kafka Message Troubleshooting
+
+- **No messages appearing**: Verify Kafka is running correctly with `docker-compose ps`
+- **Message format issues**: If messages appear garbled, use the `--property print.key=true --property key.separator=:` options with kafka-console-consumer for better formatting
+- **Missing trade information**: Ensure orders are being matched (check server logs for errors)
