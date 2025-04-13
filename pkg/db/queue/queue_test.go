@@ -104,20 +104,23 @@ func TestQueueMessageSender_SendDoneMessage(t *testing.T) {
 		Left:      "50.0",
 	}
 
-	// Create sender with mock producer
-	sender := &QueueMessageSender{}
+	// Create mock producer
+	mockProd := &mockProducer{}
 
 	// Override the producer creation with our mock
 	oldNewSyncProducer := newSyncProducer
 	defer func() { newSyncProducer = oldNewSyncProducer }()
-
-	mockProd := &mockProducer{}
 	newSyncProducer = func(addrs []string, config *sarama.Config) (sarama.SyncProducer, error) {
 		return mockProd, nil
 	}
 
+	// Create sender with mock producer
+	sender, err := NewQueueMessageSender()
+	require.NoError(t, err)
+	defer sender.Close()
+
 	// Test sending message
-	err := sender.SendDoneMessage(doneMessage)
+	err = sender.SendDoneMessage(doneMessage)
 	require.NoError(t, err)
 
 	// Verify the message was sent
