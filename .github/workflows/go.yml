@@ -48,6 +48,8 @@ jobs:
       run: make build
         
     - name: Test
+      env:
+        REDIS_ADDR: localhost:6379
       run: |
         make test-unit
-        make test-redis
+        go test -v -race ./test/integration/... -run RedisIntegration
