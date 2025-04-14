@@ -10,9 +10,19 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
     - uses: actions/checkout@v4
 
@@ -20,28 +30,24 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: '1.22'
+        cache: true
         
-    - name: Install Protoc
+    - name: Install Protoc and dependencies
       run: |
-        sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
         go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
         go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        go install golang.org/x/tools/cmd/goimports@latest
         echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
         
-    - name: Install goimports
-      run: |
-        go install golang.org/x/tools/cmd/goimports@latest
-        
-    # Option 1: Step-by-step approach (currently used)
     - name: Generate Protobuf
       run: make proto
         
     - name: Build
       run: make build
         
-    # Option 2: All-in-one approach (alternative)
-    # - name: Build All
-    #   run: make build-all
-        
     - name: Test
-      run: make test
+      run: |
+        make test-unit
+        make test-redis
