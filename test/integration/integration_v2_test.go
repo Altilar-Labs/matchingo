@@ -729,7 +729,6 @@ func TestIntegrationV2_StopLimit(t *testing.T) {
 
 // TestIntegrationV2_Redis_StopLimit tests stop-limit order functionality with real Redis backend
 func TestIntegrationV2_Redis_StopLimit(t *testing.T) {
-	// Original test below is uncommented
 	testutil.WithTestDependencies(t, func(redisAddr, kafkaAddr string) {
 		client, teardown := setupRealIntegrationTest(t, redisAddr, kafkaAddr)
 		defer teardown()
@@ -738,6 +737,7 @@ func TestIntegrationV2_Redis_StopLimit(t *testing.T) {
 		bookName := "redis-integ-test-book-v2-stop"
 		stopBuyID := "redis-stop-buy-1"
 		triggerSellID := "redis-trigger-sell-1"
+		triggerBuyID := "redis-trigger-buy-1" // New order to execute the trade
 		fillSellID := "redis-fill-sell-1"
 
 		// 1. Create Order Book with Redis backend
@@ -770,7 +770,7 @@ func TestIntegrationV2_Redis_StopLimit(t *testing.T) {
 		assert.Empty(t, stateResp1.Bids, "Stop order should not be on bids yet")
 		assert.Empty(t, stateResp1.Asks, "Stop order should not be on asks yet")
 
-		// 3. Place a Sell Order to Trigger the Stop (Sell @ 105)
+		// 3. Place a Sell Order at Stop Price (105.0)
 		_, err = client.CreateOrder(ctx, &proto.CreateOrderRequest{
 			OrderBookName: bookName,
 			OrderId:       triggerSellID,
@@ -782,24 +782,37 @@ func TestIntegrationV2_Redis_StopLimit(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to place trigger sell order")
 
+		// Small delay to ensure order is processed
+		time.Sleep(200 * time.Millisecond)
+
+		// 4. Place a Buy Order to Execute Trade at Stop Price (105.0)
+		_, err = client.CreateOrder(ctx, &proto.CreateOrderRequest{
+			OrderBookName: bookName,
+			OrderId:       triggerBuyID,
+			Side:          proto.OrderSide_BUY,
+			Quantity:      "1.0", // Match the trigger sell order
+			Price:         "105.0",
+			OrderType:     proto.OrderType_LIMIT,
+			TimeInForce:   proto.TimeInForce_IOC, // Ensure immediate execution
+		})
+		require.NoError(t, err, "Failed to place trigger buy order")
+
 		// Small delay to ensure order is processed and trigger happens
 		time.Sleep(500 * time.Millisecond)
 
-		// Verify state (trigger sell should be on asks, stop should now be on bids)
+		// Verify state after trade at stop price
 		stateResp2, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
 		require.NoError(t, err)
-		require.Len(t, stateResp2.Asks, 1, "Expected trigger sell on asks")
-		assert.Equal(t, "105.000", stateResp2.Asks[0].Price)
 
-		// Our stop order is on either the bids or still in the stop book
-		if len(stateResp2.Bids) > 0 {
-			// Good - stop order was activated and is on bids
-			assert.Equal(t, "104.000", stateResp2.Bids[0].Price)
-		} else {
-			t.Log("Stop order was not activated - expected to find on bids but was not there")
-		}
+		// Asks should be empty (trigger sell was matched)
+		assert.Empty(t, stateResp2.Asks, "Trigger sell should be matched")
 
-		// 4. Place a Sell Order to Match the Activated Stop (Sell @ 104)
+		// Stop order should now be activated and on bids at limit price
+		require.Len(t, stateResp2.Bids, 1, "Stop order should be activated and on bids")
+		assert.Equal(t, "104.000", stateResp2.Bids[0].Price, "Activated stop order should be at limit price")
+		compareDecimalStrings(t, "10.000", stateResp2.Bids[0].TotalQuantity, "Activated stop order should have full quantity")
+
+		// 5. Place a Sell Order to Match the Activated Stop (Sell @ 104)
 		fillResp, err := client.CreateOrder(ctx, &proto.CreateOrderRequest{
 			OrderBookName: bookName,
 			OrderId:       fillSellID,
@@ -811,27 +824,23 @@ func TestIntegrationV2_Redis_StopLimit(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to place fill sell order")
 
-		// If stop order was properly activated, this should be filled
-		if len(stateResp2.Asks) > 0 {
-			assert.Equal(t, proto.OrderStatus_FILLED, fillResp.Status, "Fill sell order should be filled")
+		// Small delay to ensure matching occurs
+		time.Sleep(200 * time.Millisecond)
 
-			// Verify final state after matching
-			stateResp3, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
-			require.NoError(t, err)
+		// Verify fill order was executed
+		assert.Equal(t, proto.OrderStatus_FILLED, fillResp.Status, "Fill sell order should be filled")
 
-			// There should be no asks except the initial trigger (fill buy was matched)
-			assert.Len(t, stateResp3.Asks, 1, "Should still have the trigger buy order")
-			assert.Equal(t, "95.000", stateResp3.Asks[0].Price)
+		// Verify final state
+		stateResp3, err := client.GetOrderBookState(ctx, &proto.GetOrderBookStateRequest{Name: bookName})
+		require.NoError(t, err)
 
-			// The stop sell order should still have 3.0 quantity left (10.0 - 7.0)
-			if len(stateResp3.Bids) > 0 {
-				assert.Equal(t, "96.000", stateResp3.Bids[0].Price)
-				compareDecimalStrings(t, "3.000", stateResp3.Bids[0].TotalQuantity, "Remaining stop sell order quantity")
-			}
-		} else {
-			// If stop order wasn't activated, the buy order should be open on the book
-			assert.Equal(t, proto.OrderStatus_OPEN, fillResp.Status, "Fill buy order should be open if stop not activated")
-		}
+		// Asks should be empty
+		assert.Empty(t, stateResp3.Asks, "Asks should be empty")
+
+		// Stop order should have remaining quantity (10.0 - 7.0 = 3.0)
+		require.Len(t, stateResp3.Bids, 1, "Should have one bid level")
+		assert.Equal(t, "104.000", stateResp3.Bids[0].Price, "Remaining stop order should be at limit price")
+		compareDecimalStrings(t, "3.000", stateResp3.Bids[0].TotalQuantity, "Remaining stop order quantity should be 3.0")
 	})
 }
 

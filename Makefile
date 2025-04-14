@@ -5,30 +5,30 @@ SHELL := /bin/bash
 # Test targets
 test: test-unit test-integration
 
-test-unit:
+test-unit: imports fix
 	@echo "Running unit tests..."
 	go test -v -race -coverprofile=coverage.out ./pkg/...
 
 test-integration:
 	@echo "Starting dependencies for integration tests..."
 	$(MAKE) test-deps-up
-	@echo "Running integration tests..."
+	@trap '$(MAKE) test-deps-down' EXIT; \
+	echo "Running integration tests..."; \
 	go test -v -race ./test/integration/... -run IntegrationV2
-	@echo "Stopping dependencies..."
-	$(MAKE) test-deps-down
 
 test-redis:
 	@echo "Starting dependencies for Redis tests..."
 	$(MAKE) test-deps-up
-	@echo "Running Redis integration tests..."
+	@trap '$(MAKE) test-deps-down' EXIT; \
+	echo "Running Redis integration tests..."; \
 	go test -v -race ./test/integration/... -run RedisIntegration
-	@echo "Stopping dependencies..."
-	$(MAKE) test-deps-down
 
 test-stop-orders:
-	@echo "Running stop order tests with Docker containers..."
+	@echo "Starting dependencies for stop order tests..."
+	$(MAKE) test-deps-up
+	@trap '$(MAKE) test-deps-down' EXIT; \
+	echo "Running stop order tests with Docker containers..."; \
 	go test -v ./test/integration/... -run 'TestIntegrationV2_.*StopLimit|TestIntegrationV2_.*StopLimitActivation'
-	@echo "Tests completed."
 
 # Development targets
 demo-memory:

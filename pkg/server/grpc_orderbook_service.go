@@ -8,6 +8,7 @@ import (
 
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/erain9/matchingo/pkg/backend/memory"
+	"github.com/erain9/matchingo/pkg/backend/redis"
 	"github.com/erain9/matchingo/pkg/core"
 	"github.com/erain9/matchingo/pkg/logging"
 	"github.com/nikolaydubina/fpdecimal"
@@ -525,12 +526,42 @@ func (s *GRPCOrderBookService) GetOrderBookState(ctx context.Context, req *proto
 					OrderCount:    int32(len(orders)),
 				})
 			}
+		} else if bidSide, ok := bids.(*redis.RedisSide); ok {
+			prices := bidSide.Prices()
+			for i := 0; i < len(prices) && i < depth; i++ {
+				price := prices[i]
+				orders := bidSide.Orders(price)
+				totalQuantity := fpdecimal.Zero
+				for _, order := range orders {
+					totalQuantity = totalQuantity.Add(order.Quantity())
+				}
+				response.Bids = append(response.Bids, &proto.PriceLevel{
+					Price:         price.String(),
+					TotalQuantity: totalQuantity.String(),
+					OrderCount:    int32(len(orders)),
+				})
+			}
 		}
 	}
 
 	// Get asks
 	if asks := orderBook.GetAsks(); asks != nil {
 		if askSide, ok := asks.(*memory.OrderSide); ok {
+			prices := askSide.Prices()
+			for i := 0; i < len(prices) && i < depth; i++ {
+				price := prices[i]
+				orders := askSide.Orders(price)
+				totalQuantity := fpdecimal.Zero
+				for _, order := range orders {
+					totalQuantity = totalQuantity.Add(order.Quantity())
+				}
+				response.Asks = append(response.Asks, &proto.PriceLevel{
+					Price:         price.String(),
+					TotalQuantity: totalQuantity.String(),
+					OrderCount:    int32(len(orders)),
+				})
+			}
+		} else if askSide, ok := asks.(*redis.RedisSide); ok {
 			prices := askSide.Prices()
 			for i := 0; i < len(prices) && i < depth; i++ {
 				price := prices[i]

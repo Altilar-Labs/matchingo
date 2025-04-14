@@ -818,13 +818,6 @@ func (ob *OrderBook) triggerStopOrder(order *Order) {
 		return
 	}
 
-	// Update the order record in the backend
-	err = ob.backend.StoreOrder(limitOrder)
-	if err != nil {
-		fmt.Printf("Error storing converted limit order: %v\n", err)
-		return
-	}
-
 	// Create a done object to track the activation
 	done := newDone(order)
 	done.appendActivated(order)

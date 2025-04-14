@@ -23,7 +23,7 @@ type DockerContainer struct {
 // StartRedisContainer starts a Redis container for testing
 func StartRedisContainer(ctx context.Context) (*DockerContainer, error) {
 	containerName := fmt.Sprintf("matchingo-redis-test-%d", time.Now().Unix())
-	hostPort := "6380"
+	hostPort := "6379"
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-d",
 		"--name", containerName,

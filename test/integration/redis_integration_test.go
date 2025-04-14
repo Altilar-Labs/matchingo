@@ -16,7 +16,7 @@ import (
 func TestRedisIntegration_BasicFlow(t *testing.T) {
 	// Use our new Docker utility to automatically start Redis and Kafka
 	testutil.RunIntegrationTest(t, func(redisAddr, kafkaAddr string) {
-		client, _, teardown := setupIntegrationTestV2(t)
+		client, teardown := setupRealIntegrationTest(t, redisAddr, kafkaAddr)
 		defer teardown()
 
 		// Use a unique book name with timestamp to avoid conflicts with previous test runs
