@@ -62,4 +62,27 @@ services:
     environment:
       - LOG_LEVEL=debug
       - LOG_FORMAT=pretty
-    command: ["matchingo-server", "-grpc_port=50051", "-http_port=8080", "-log_level=debug", "-log_format=pretty"] 
+    command: ["matchingo-server", "-grpc_port=50051", "-http_port=8080", "-log_level=debug", "-log_format=pretty"]
+
+  marketmaker:
+    build:
+      context: .
+      dockerfile: Dockerfile.marketmaker
+    container_name: matchingo-marketmaker
+    depends_on:
+      server:
+        condition: service_started
+    environment:
+      - MATCHINGO_GRPC_ADDR=server:50051
+      - MARKET_SYMBOL=BTC-USDT
+      - EXTERNAL_SYMBOL=BTCUSDT
+      - PRICE_SOURCE_URL=https://api.binance.com
+      - NUM_LEVELS=3
+      - BASE_SPREAD_PERCENT=0.1
+      - PRICE_STEP_PERCENT=0.05
+      - ORDER_SIZE=0.01
+      - UPDATE_INTERVAL_SECONDS=10
+      - MARKET_MAKER_ID=mm-01
+      - HTTP_TIMEOUT_SECONDS=5
+      - MAX_RETRIES=3
+      - LOG_LEVEL=debug 

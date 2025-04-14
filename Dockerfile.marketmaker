@@ -1,0 +1,42 @@
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache make protoc
+
+# Copy only the necessary files for building
+COPY go.mod go.sum ./
+COPY Makefile ./
+COPY pkg/ ./pkg/
+COPY cmd/ ./cmd/
+
+# Download dependencies
+RUN go mod download
+
+# Build the market maker binary
+RUN make build-marketmaker
+
+FROM alpine:latest
+
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /app/bin/marketmaker .
+
+# Set environment variables with defaults
+ENV MATCHINGO_GRPC_ADDR=localhost:50051 \
+    MARKET_SYMBOL=BTC-USDT \
+    EXTERNAL_SYMBOL=BTCUSDT \
+    PRICE_SOURCE_URL=https://api.binance.com \
+    NUM_LEVELS=3 \
+    BASE_SPREAD_PERCENT=0.1 \
+    PRICE_STEP_PERCENT=0.05 \
+    ORDER_SIZE=0.01 \
+    UPDATE_INTERVAL_SECONDS=10 \
+    MARKET_MAKER_ID=mm-01 \
+    HTTP_TIMEOUT_SECONDS=5 \
+    MAX_RETRIES=3
+
+# Run the market maker
+CMD ["./marketmaker"] 

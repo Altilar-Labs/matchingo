@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: test test-unit test-integration test-redis test-stop-orders imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down bench bench-memory bench-redis bench-verbose
+.PHONY: test test-unit test-integration test-redis test-stop-orders imports fix clean build proto build-all run-server run-client test-deps-up test-deps-down bench bench-memory bench-redis bench-verbose build-marketmaker run-marketmaker
 
 # Test targets
 test: test-unit test-integration
@@ -79,7 +79,13 @@ build:
 	@go build -o bin/orderbook-client cmd/client/main.go
 	@echo "Build complete. Binaries in ./bin/"
 
-build-all: proto build
+build-marketmaker:
+	@echo "Building market maker..."
+	@mkdir -p bin
+	@go build -o bin/marketmaker cmd/marketmaker/main.go
+	@echo "Market maker binary built in ./bin/"
+
+build-all: proto build build-marketmaker
 
 # Run targets
 run-server:
@@ -89,6 +95,10 @@ run-server:
 run-client:
 	@echo "Running orderbook client..."
 	@./bin/orderbook-client --cmd=list
+
+run-marketmaker:
+	@echo "Running market maker..."
+	@./bin/marketmaker
 
 # Test dependency management
 test-deps-up:
