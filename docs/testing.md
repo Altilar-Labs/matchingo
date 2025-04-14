@@ -140,7 +140,7 @@ This section details specific test scenarios and their current automated test co
 
 Based on the scenarios above:
 
-*   **Good Coverage:** Core matching logic (price-time, multi-level), basic limit/market order placement and matching, basic GTC TIF, order book creation/deletion/state retrieval (memory backend), explicit order cancellation, basic gRPC operations, core order validation.
+*   **Good Coverage:** Core matching logic (price-time, multi-level), basic limit/market order placement and matching, basic GTC TIF, order book creation/deletion/state retrieval (memory backend), explicit order cancellation, basic gRPC operations, core order validation, market maker strategy implementation and price fetching.
 *   **Partial/Needs Improvement:**
     *   **Stop Orders:** Core logic tests exist, but activation and cancellation behavior, especially in integration scenarios, needs verification and potentially fixes (⚠️).
     *   **IOC/FOK Orders:** Core logic tests exist, but integration tests indicate potential issues needing investigation (⚠️).
@@ -149,6 +149,7 @@ Based on the scenarios above:
     *   **Error Handling:** gRPC layer needs more explicit tests for invalid inputs (quantity, type, non-existent entities).
     *   **Kafka Integration:** Message triggers for stop activation and explicit cancellation need clarification and testing.
     *   **Concurrency:** No specific automated tests for concurrent operations beyond running the suite with `-race`.
+    *   **Market Maker Integration:** Market maker core functionality and strategy calculations are well tested, but integration with the order book service for order placement and lifecycle management needs dedicated tests.
 
 ## 6. Running Tests
 
