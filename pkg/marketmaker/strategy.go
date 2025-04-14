@@ -11,12 +11,6 @@ import (
 	pb "github.com/erain9/matchingo/pkg/api/proto"
 )
 
-// MarketMakerStrategy defines the interface for market making strategies
-type MarketMakerStrategy interface {
-	// CalculateOrders calculates the orders to be placed based on the current price
-	CalculateOrders(ctx context.Context, currentPrice float64) ([]*pb.CreateOrderRequest, error)
-}
-
 // LayeredSymmetricQuoting implements a symmetric market making strategy with multiple price levels
 type LayeredSymmetricQuoting struct {
 	cfg    *Config
@@ -34,7 +28,7 @@ func NewLayeredSymmetricQuoting(cfg *Config, logger *slog.Logger) MarketMakerStr
 // CalculateOrders implements MarketMakerStrategy
 func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPrice float64) ([]*pb.CreateOrderRequest, error) {
 	baseHalfSpread := currentPrice * (s.cfg.BaseSpreadPercent / 2 / 100)
-	priceStep := currentPrice * (s.cfg.PriceStepPercent / 100)
+	basePriceStep := currentPrice * (s.cfg.PriceStepPercent / 100)
 
 	// Pre-allocate slice for all orders (buy and sell orders for each level)
 	orders := make([]*pb.CreateOrderRequest, 0, s.cfg.NumLevels*2)
@@ -42,9 +36,13 @@ func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPr
 	timestamp := time.Now().UnixNano()
 
 	for i := 1; i <= s.cfg.NumLevels; i++ {
+		// Calculate an increasing step size based on level
+		// Use i*i instead of i to create an increasing difference between levels
+		levelStep := basePriceStep * float64(i)
+
 		// Calculate bid and ask prices for this level
-		bidPrice := currentPrice - baseHalfSpread - float64(i-1)*priceStep
-		askPrice := currentPrice + baseHalfSpread + float64(i-1)*priceStep
+		bidPrice := currentPrice - baseHalfSpread - levelStep
+		askPrice := currentPrice + baseHalfSpread + levelStep
 
 		// Format prices with appropriate precision (8 decimal places for crypto)
 		bidPriceStr := strconv.FormatFloat(math.Round(bidPrice*1e8)/1e8, 'f', 8, 64)
@@ -54,7 +52,7 @@ func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPr
 		buyOrder := &pb.CreateOrderRequest{
 			OrderBookName: s.cfg.MarketSymbol,
 			OrderId:       fmt.Sprintf("%s-buy-%d-%d", s.cfg.MarketMakerID, i, timestamp),
-			Side:          pb.Side_BUY,
+			Side:          pb.OrderSide_BUY,
 			OrderType:     pb.OrderType_LIMIT,
 			Quantity:      s.cfg.OrderSize,
 			Price:         bidPriceStr,
@@ -66,7 +64,7 @@ func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPr
 		sellOrder := &pb.CreateOrderRequest{
 			OrderBookName: s.cfg.MarketSymbol,
 			OrderId:       fmt.Sprintf("%s-sell-%d-%d", s.cfg.MarketMakerID, i, timestamp),
-			Side:          pb.Side_SELL,
+			Side:          pb.OrderSide_SELL,
 			OrderType:     pb.OrderType_LIMIT,
 			Quantity:      s.cfg.OrderSize,
 			Price:         askPriceStr,

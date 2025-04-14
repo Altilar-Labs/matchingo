@@ -10,13 +10,6 @@ import (
 	pb "github.com/erain9/matchingo/pkg/api/proto"
 )
 
-// OrderPlacer defines the interface for placing and canceling orders
-type OrderPlacer interface {
-	CreateOrder(ctx context.Context, req *pb.CreateOrderRequest) (*pb.OrderResponse, error)
-	CancelOrder(ctx context.Context, req *pb.CancelOrderRequest) error
-	Close() error
-}
-
 // MarketMaker represents the market making service
 type MarketMaker struct {
 	cfg          *Config
