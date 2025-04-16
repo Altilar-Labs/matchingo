@@ -11,11 +11,12 @@ import (
 
 func TestTradeOrder_MarshalJSON(t *testing.T) {
 	trade := TradeOrder{
-		OrderID:  "test-123",
-		Role:     MAKER,
-		IsQuote:  false,
-		Price:    fpdecimal.FromFloat(100.5),
-		Quantity: fpdecimal.FromFloat(10.0),
+		OrderID:     "test-123",
+		Role:        MAKER,
+		IsQuote:     false,
+		Price:       fpdecimal.FromFloat(100.5),
+		Quantity:    fpdecimal.FromFloat(10.0),
+		UserAddress: "0x1234567890123456789012345678901234567890",
 	}
 
 	jsonData, err := json.Marshal(&trade)
@@ -23,7 +24,7 @@ func TestTradeOrder_MarshalJSON(t *testing.T) {
 		t.Fatalf("Failed to marshal TradeOrder: %v", err)
 	}
 
-	expected := `{"orderID":"test-123","role":"MAKER","isQuote":false,"price":"100.500","quantity":"10.000"}`
+	expected := `{"orderID":"test-123","role":"MAKER","isQuote":false,"price":"100.500","quantity":"10.000","userAddress":"0x1234567890123456789012345678901234567890"}`
 	if string(jsonData) != expected {
 		t.Errorf("Expected JSON %s, got %s", expected, string(jsonData))
 	}
@@ -33,7 +34,7 @@ func TestNewDone(t *testing.T) {
 	orderID := "test-123"
 	quantity := fpdecimal.FromFloat(10.0)
 	price := fpdecimal.FromFloat(100.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 
 	done := newDone(order)
@@ -76,7 +77,7 @@ func TestDone_GetTradeOrder(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Create a Done object
@@ -90,7 +91,7 @@ func TestDone_GetTradeOrder(t *testing.T) {
 
 	// Append an order as a trade
 	matchOrderID := "match-123"
-	matchOrder, err := NewLimitOrder(matchOrderID, Sell, quantity, price, GTC, "")
+	matchOrder, err := NewLimitOrder(matchOrderID, Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	matchQuantity := fpdecimal.FromFloat(5.0)
 	done.appendOrder(matchOrder, matchQuantity, price)
@@ -115,7 +116,7 @@ func TestDone_TradesToSlice(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Create a Done object
@@ -129,7 +130,7 @@ func TestDone_TradesToSlice(t *testing.T) {
 
 	// Append an order as a trade
 	matchOrderID := "match-123"
-	matchOrder, err := NewLimitOrder(matchOrderID, Sell, quantity, price, GTC, "")
+	matchOrder, err := NewLimitOrder(matchOrderID, Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	matchQuantity := fpdecimal.FromFloat(5.0)
 	done.appendOrder(matchOrder, matchQuantity, price)
@@ -146,7 +147,7 @@ func TestDone_CancelAndActivation(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Create a Done object
@@ -162,7 +163,7 @@ func TestDone_CancelAndActivation(t *testing.T) {
 	}
 
 	// Append a canceled order
-	canceledOrder, err := NewLimitOrder("cancel-123", Sell, quantity, price, GTC, "")
+	canceledOrder, err := NewLimitOrder("cancel-123", Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	done.appendCanceled(canceledOrder)
 
@@ -175,7 +176,7 @@ func TestDone_CancelAndActivation(t *testing.T) {
 	}
 
 	// Append an activated order
-	activatedOrder, err := NewLimitOrder("activate-123", Sell, quantity, price, GTC, "")
+	activatedOrder, err := NewLimitOrder("activate-123", Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	done.appendActivated(activatedOrder)
 
@@ -193,7 +194,7 @@ func TestDone_SetLeftQuantity(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Create a Done object
@@ -227,7 +228,7 @@ func TestDone_MarshalJSON(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	order.SetMaker()
 
@@ -237,9 +238,9 @@ func TestDone_MarshalJSON(t *testing.T) {
 	// Add some data to the Done object
 	cancelID := "cancel-123"
 	activateID := "activate-123"
-	canceledOrder, err := NewLimitOrder(cancelID, Sell, quantity, price, GTC, "")
+	canceledOrder, err := NewLimitOrder(cancelID, Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
-	activatedOrder, err := NewLimitOrder(activateID, Sell, quantity, price, GTC, "")
+	activatedOrder, err := NewLimitOrder(activateID, Sell, quantity, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	done.appendCanceled(canceledOrder)
 	done.appendActivated(activatedOrder)
@@ -290,7 +291,8 @@ func TestDone_ToMessagingDoneMessage(t *testing.T) {
 	orderID := "test-123"
 	quantity := fpdecimal.FromFloat(10.0)
 	price := fpdecimal.FromFloat(100.0)
-	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "")
+	userAddress := "0x1234567890123456789012345678901234567890"
+	order, err := NewLimitOrder(orderID, Buy, quantity, price, GTC, "", userAddress)
 	require.NoError(t, err)
 
 	// Create a Done object
@@ -300,11 +302,11 @@ func TestDone_ToMessagingDoneMessage(t *testing.T) {
 	leftQty := fpdecimal.FromFloat(3.0)
 	done.SetLeftQuantity(&leftQty)
 	done.Stored = true
-	done.appendCanceled(&Order{id: "cancel-1"})
-	done.appendActivated(&Order{id: "activate-1"})
+	done.appendCanceled(&Order{id: "cancel-1", userAddress: userAddress})
+	done.appendActivated(&Order{id: "activate-1", userAddress: userAddress})
 
 	// Add a trade
-	matchOrder, err := NewLimitOrder("match-1", Sell, fpdecimal.FromFloat(7.0), price, GTC, "")
+	matchOrder, err := NewLimitOrder("match-1", Sell, fpdecimal.FromFloat(7.0), price, GTC, "", userAddress)
 	require.NoError(t, err)
 	done.appendOrder(matchOrder, fpdecimal.FromFloat(7.0), price)
 
@@ -322,9 +324,12 @@ func TestDone_ToMessagingDoneMessage(t *testing.T) {
 	assert.Equal(t, "10.000", msg.Quantity)
 	assert.Equal(t, "7.000", msg.Processed)
 	assert.Equal(t, "3.000", msg.Left)
+	assert.Equal(t, userAddress, msg.UserAddress)
 	require.Len(t, msg.Trades, 2)
 	assert.Equal(t, orderID, msg.Trades[0].OrderID)
 	assert.Equal(t, "7.000", msg.Trades[0].Quantity)
+	assert.Equal(t, userAddress, msg.Trades[0].UserAddress)
 	assert.Equal(t, "match-1", msg.Trades[1].OrderID)
 	assert.Equal(t, "7.000", msg.Trades[1].Quantity)
+	assert.Equal(t, userAddress, msg.Trades[1].UserAddress)
 }

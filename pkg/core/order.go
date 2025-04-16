@@ -70,6 +70,7 @@ type Order struct {
 	stop        fpdecimal.Decimal
 	tif         TIF
 	oco         string
+	userAddress string
 }
 
 // MarshalJSON implements custom JSON marshaling for Order
@@ -87,6 +88,7 @@ func (o *Order) MarshalJSON() ([]byte, error) {
 		Stop        string    `json:"stop"`
 		TIF         TIF       `json:"tif"`
 		OCO         string    `json:"oco"`
+		UserAddress string    `json:"userAddress"`
 	}
 
 	return json.Marshal(OrderJSON{
@@ -102,6 +104,7 @@ func (o *Order) MarshalJSON() ([]byte, error) {
 		Stop:        o.stop.String(),
 		TIF:         o.tif,
 		OCO:         o.oco,
+		UserAddress: o.userAddress,
 	})
 }
 
@@ -120,6 +123,7 @@ func (o *Order) UnmarshalJSON(data []byte) error {
 		Stop        string    `json:"stop"`
 		TIF         TIF       `json:"tif"`
 		OCO         string    `json:"oco"`
+		UserAddress string    `json:"userAddress"`
 	}
 
 	var orderJSON OrderJSON
@@ -158,12 +162,13 @@ func (o *Order) UnmarshalJSON(data []byte) error {
 
 	o.tif = orderJSON.TIF
 	o.oco = orderJSON.OCO
+	o.userAddress = orderJSON.UserAddress
 
 	return nil
 }
 
 // NewMarketOrder creates new constant object Order
-func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal) (*Order, error) {
+func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal, userAddress string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
 		return nil, ErrInvalidQuantity
 	}
@@ -176,11 +181,12 @@ func NewMarketOrder(orderID string, side Side, quantity fpdecimal.Decimal) (*Ord
 		originalQty: quantity,
 		price:       fpdecimal.Zero,
 		canceled:    false,
+		userAddress: userAddress,
 	}, nil
 }
 
 // NewMarketQuoteOrder creates new constant object Order, but quantity is in Quote mode
-func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal) (*Order, error) {
+func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal, userAddress string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
 		return nil, ErrInvalidQuantity
 	}
@@ -194,11 +200,12 @@ func NewMarketQuoteOrder(orderID string, side Side, quantity fpdecimal.Decimal) 
 		price:       fpdecimal.Zero,
 		canceled:    false,
 		isQuote:     true,
+		userAddress: userAddress,
 	}, nil
 }
 
 // NewLimitOrder creates new constant object Order
-func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal, tif TIF, oco string) (*Order, error) {
+func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal, tif TIF, oco string, userAddress string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
 		return nil, ErrInvalidQuantity
 	}
@@ -221,11 +228,12 @@ func NewLimitOrder(orderID string, side Side, quantity, price fpdecimal.Decimal,
 		canceled:    false,
 		oco:         oco,
 		tif:         tif,
+		userAddress: userAddress,
 	}, nil
 }
 
 // NewStopLimitOrder creates new constant object Order
-func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecimal.Decimal, oco string) (*Order, error) {
+func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecimal.Decimal, oco string, userAddress string) (*Order, error) {
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
 		return nil, ErrInvalidQuantity
 	}
@@ -244,6 +252,7 @@ func NewStopLimitOrder(orderID string, side Side, quantity, price, stop fpdecima
 		canceled:    false,
 		stop:        stop,
 		oco:         oco,
+		userAddress: userAddress,
 	}, nil
 }
 
@@ -360,11 +369,12 @@ func (o *Order) Role() Role {
 // ToSimple returns TradeOrder
 func (o *Order) ToSimple() *TradeOrder {
 	return &TradeOrder{
-		OrderID:  o.ID(),
-		Role:     o.Role(),
-		IsQuote:  o.IsQuote(),
-		Quantity: o.Quantity(),
-		Price:    o.Price(),
+		OrderID:     o.ID(),
+		Role:        o.Role(),
+		IsQuote:     o.IsQuote(),
+		Quantity:    o.Quantity(),
+		Price:       o.Price(),
+		UserAddress: o.UserAddress(),
 	}
 }
 
@@ -388,5 +398,11 @@ func (o *Order) ToLimitOrder() *Order {
 		role:        o.role,
 		tif:         o.tif,
 		oco:         o.oco,
+		userAddress: o.userAddress,
 	}
+}
+
+// UserAddress returns the user's address
+func (o *Order) UserAddress() string {
+	return o.userAddress
 }

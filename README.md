@@ -207,13 +207,13 @@ Create an order book:
 Create a buy order:
 
 ```bash
-./bin/orderbook-client create-order --book=btcusd --id=order1 --side=buy --type=limit --qty=1.0 --price=50000.0
+./bin/orderbook-client create-order --book=btcusd --id=order1 --side=buy --type=limit --qty=1.0 --price=50000.0 --user=0x1234567890123456789012345678901234567890
 ```
 
 Create a sell order:
 
 ```bash
-./bin/orderbook-client create-order --book=btcusd --id=order2 --side=sell --type=limit --qty=1.0 --price=50000.0
+./bin/orderbook-client create-order --book=btcusd --id=order2 --side=sell --type=limit --qty=1.0 --price=50000.0 --user=0x1234567890123456789012345678901234567891
 ```
 
 List all order books:

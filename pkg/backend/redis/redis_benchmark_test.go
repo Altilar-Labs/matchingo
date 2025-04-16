@@ -39,7 +39,7 @@ func benchmarkAppendToSide(b *testing.B, backend *RedisBackend, side core.Side) 
 	for i := 0; i < b.N; i++ {
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		orders[i] = order
 	}
@@ -87,7 +87,7 @@ func benchmarkRemoveFromSide(b *testing.B, backend *RedisBackend, side core.Side
 	for i := 0; i < benchSize; i++ {
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "")
+		order, err := core.NewLimitOrder(fmt.Sprintf("order-%d", i), side, qty, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		orders[i] = order
 		backend.AppendToSide(side, order)
@@ -149,7 +149,7 @@ func BenchmarkRedisBackend_StoreOrder(b *testing.B) {
 		orderID := fmt.Sprintf("order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		orders[i] = order
 	}
@@ -179,7 +179,7 @@ func BenchmarkRedisBackend_GetOrder(b *testing.B) {
 		orderIDs[i] = orderID
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		_ = backend.StoreOrder(order)
 	}
@@ -208,7 +208,7 @@ func BenchmarkRedisBackend_UpdateOrder(b *testing.B) {
 		orderID := fmt.Sprintf("order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		orders[i] = order
 		_ = backend.StoreOrder(order)
@@ -240,7 +240,7 @@ func BenchmarkRedisBackend_DeleteOrder(b *testing.B) {
 		orderID := fmt.Sprintf("order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		orders[i] = order
 		_ = backend.StoreOrder(order)
@@ -272,7 +272,7 @@ func BenchmarkOrderBook_Process_Redis(b *testing.B) {
 		orderID := fmt.Sprintf("sell-order-%d", i)
 		price := fpdecimal.FromFloat(float64(100 + i))
 		quantity := fpdecimal.FromFloat(10.0)
-		order, err := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "")
+		order, err := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)
@@ -282,7 +282,7 @@ func BenchmarkOrderBook_Process_Redis(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("buy-order-%d", i)
 		quantity := fpdecimal.FromFloat(1.0)
-		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity, "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)
@@ -310,7 +310,7 @@ func BenchmarkOrderBook_LargeOrderBook_Redis(b *testing.B) {
 		buyOrderID := fmt.Sprintf("buy-order-%d", i)
 		buyPrice := fpdecimal.FromFloat(float64(90 - (i % 90)))
 		buyQuantity := fpdecimal.FromFloat(10.0)
-		buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "")
+		buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(buyOrder)
 		require.NoError(b, err)
@@ -319,7 +319,7 @@ func BenchmarkOrderBook_LargeOrderBook_Redis(b *testing.B) {
 		sellOrderID := fmt.Sprintf("sell-order-%d", i)
 		sellPrice := fpdecimal.FromFloat(float64(110 + (i % 90)))
 		sellQuantity := fpdecimal.FromFloat(10.0)
-		sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "")
+		sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(sellOrder)
 		require.NoError(b, err)
@@ -330,7 +330,7 @@ func BenchmarkOrderBook_LargeOrderBook_Redis(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("market-order-%d", i)
 		quantity := fpdecimal.FromFloat(5.0)
-		order, err := core.NewMarketOrder(orderID, core.Buy, quantity)
+		order, err := core.NewMarketOrder(orderID, core.Buy, quantity, "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)

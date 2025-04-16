@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pb "github.com/erain9/matchingo/pkg/api/proto"
+	"github.com/erain9/matchingo/pkg/core"
 )
 
 // MarketMaker represents the market making service
@@ -20,10 +21,17 @@ type MarketMaker struct {
 	activeOrders sync.Map // map[string]bool - tracks active order IDs
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
+	address      string // Market maker's address
 }
 
 // NewMarketMaker creates a new market maker service
-func NewMarketMaker(cfg *Config, logger *slog.Logger, orderPlacer OrderPlacer, priceFetcher PriceFetcher, strategy MarketMakerStrategy) *MarketMaker {
+func NewMarketMaker(cfg *Config, logger *slog.Logger, orderPlacer OrderPlacer, priceFetcher PriceFetcher, strategy MarketMakerStrategy) (*MarketMaker, error) {
+	// Generate a unique address for this market maker
+	address, err := core.GenerateFakeERC20Address()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate market maker address: %w", err)
+	}
+
 	return &MarketMaker{
 		cfg:          cfg,
 		logger:       logger.With("component", "MarketMaker"),
@@ -31,7 +39,8 @@ func NewMarketMaker(cfg *Config, logger *slog.Logger, orderPlacer OrderPlacer, p
 		priceFetcher: priceFetcher,
 		strategy:     strategy,
 		stopCh:       make(chan struct{}),
-	}
+		address:      address,
+	}, nil
 }
 
 // Start begins the market making process
@@ -110,7 +119,7 @@ func (m *MarketMaker) updateOrders(ctx context.Context) error {
 	}
 
 	// Calculate new orders
-	orders, err := m.strategy.CalculateOrders(ctx, price)
+	orders, err := m.strategy.CalculateOrders(ctx, price, m.address)
 	if err != nil {
 		return fmt.Errorf("failed to calculate orders: %w", err)
 	}
@@ -122,12 +131,16 @@ func (m *MarketMaker) updateOrders(ctx context.Context) error {
 
 	// Place new orders
 	for _, order := range orders {
+		// Add market maker's address to the order
+		order.UserAddress = m.address
+
 		resp, err := m.orderPlacer.CreateOrder(ctx, order)
 		if err != nil {
 			m.logger.Error("Failed to place order",
 				"order_id", order.OrderId,
 				"side", order.Side,
 				"price", order.Price,
+				"user_address", m.address,
 				"error", err)
 			continue
 		}
@@ -138,7 +151,8 @@ func (m *MarketMaker) updateOrders(ctx context.Context) error {
 		m.logger.Debug("Successfully placed order",
 			"order_id", resp.OrderId,
 			"side", order.Side,
-			"price", order.Price)
+			"price", order.Price,
+			"user_address", m.address)
 	}
 
 	return nil

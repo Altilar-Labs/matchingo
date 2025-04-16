@@ -17,7 +17,7 @@ func benchmarkMatchLimitOrder(b *testing.B, backend OrderBookBackend, numOrders 
 	for i := 0; i < numOrders; i++ {
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "")
+		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(o)
 		require.NoError(b, err)
@@ -28,7 +28,7 @@ func benchmarkMatchLimitOrder(b *testing.B, backend OrderBookBackend, numOrders 
 		id := fmt.Sprintf("bench-buy-%d", n)
 		price := fpdecimal.FromInt(10000) // Match the lowest sell price
 		qty := fpdecimal.FromInt(1)
-		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "")
+		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)
@@ -41,7 +41,7 @@ func benchmarkMatchMarketOrder(b *testing.B, backend OrderBookBackend, numOrders
 	for i := 0; i < numOrders; i++ {
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "")
+		o, err := NewLimitOrder(fmt.Sprintf("setup-sell-%d", i), Sell, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(o)
 		require.NoError(b, err)
@@ -51,7 +51,7 @@ func benchmarkMatchMarketOrder(b *testing.B, backend OrderBookBackend, numOrders
 	for n := 0; n < b.N; n++ {
 		id := fmt.Sprintf("bench-buy-%d", n)
 		qty := fpdecimal.FromInt(1)
-		order, err := NewMarketOrder(id, Buy, qty)
+		order, err := NewMarketOrder(id, Buy, qty, "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)
@@ -68,7 +68,7 @@ func benchmarkAddLimitOrder(b *testing.B, backend OrderBookBackend, numOrders in
 		id := fmt.Sprintf("bench-add-%d", n)
 		price := fpdecimal.FromInt(int64(10000 + n)) // Unique price to ensure addition
 		qty := fpdecimal.FromInt(1)
-		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "")
+		order, err := NewLimitOrder(id, Buy, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(order)
 		require.NoError(b, err)
@@ -84,7 +84,7 @@ func benchmarkCancelLimitOrder(b *testing.B, backend OrderBookBackend, numOrders
 		orderIDs[i] = id
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "")
+		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(o)
 		require.NoError(b, err)
@@ -102,7 +102,7 @@ func benchmarkCancelLimitOrder(b *testing.B, backend OrderBookBackend, numOrders
 			reAddID := fmt.Sprintf("re-add-%d", n)
 			price := fpdecimal.FromInt(int64(20000 + n))
 			qty := fpdecimal.FromInt(1)
-			order, err := NewLimitOrder(reAddID, Sell, qty, price, GTC, "")
+			order, err := NewLimitOrder(reAddID, Sell, qty, price, GTC, "", "test_user")
 			require.NoError(b, err)
 			_, err = book.Process(order)
 			require.NoError(b, err)
@@ -119,7 +119,7 @@ func benchmarkGetOrder(b *testing.B, backend OrderBookBackend, numOrders int) {
 		orderIDs[i] = id
 		price := fpdecimal.FromInt(int64(10000 + i))
 		qty := fpdecimal.FromInt(1)
-		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "")
+		o, err := NewLimitOrder(id, Sell, qty, price, GTC, "", "test_user")
 		require.NoError(b, err)
 		_, err = book.Process(o)
 		require.NoError(b, err)

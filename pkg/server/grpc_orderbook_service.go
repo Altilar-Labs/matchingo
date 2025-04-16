@@ -196,6 +196,7 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		Str("type", req.OrderType.String()).
 		Str("quantity", req.Quantity).
 		Str("price", req.Price).
+		Str("user_address", req.UserAddress).
 		Msg("Request received")
 
 	// Get the order book
@@ -227,15 +228,14 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 
 	switch req.OrderType {
 	case proto.OrderType_MARKET:
-		// Market orders don't use IsQuote based on proto definition
-		order, err = core.NewMarketOrder(req.OrderId, side, quantity)
+		order, err = core.NewMarketOrder(req.OrderId, side, quantity, req.UserAddress)
 	case proto.OrderType_LIMIT:
 		price, err := fpdecimal.FromString(req.Price)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid price format: %v", err)
 		}
 		tif := convertProtoTIFToCore(req.TimeInForce)
-		order, err = core.NewLimitOrder(req.OrderId, side, quantity, price, tif, req.OcoId)
+		order, err = core.NewLimitOrder(req.OrderId, side, quantity, price, tif, req.OcoId, req.UserAddress)
 	case proto.OrderType_STOP:
 		// Parse stop price
 		stopPrice, err := fpdecimal.FromString(req.StopPrice)
@@ -244,7 +244,7 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		}
 
 		// Create a limit order with the stop price
-		order, err = core.NewLimitOrder(req.OrderId, side, quantity, stopPrice, core.GTC, req.OcoId)
+		order, err = core.NewLimitOrder(req.OrderId, side, quantity, stopPrice, core.GTC, req.OcoId, req.UserAddress)
 	case proto.OrderType_STOP_LIMIT:
 		price, err := fpdecimal.FromString(req.Price)
 		if err != nil {
@@ -256,7 +256,7 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		}
 
 		// Create a stop limit order
-		order, err = core.NewStopLimitOrder(req.OrderId, side, quantity, price, stopPrice, req.OcoId)
+		order, err = core.NewStopLimitOrder(req.OrderId, side, quantity, price, stopPrice, req.OcoId, req.UserAddress)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported order type: %v", req.OrderType)
 	}
@@ -523,6 +523,7 @@ func (s *GRPCOrderBookService) GetOrderBookState(ctx context.Context, req *proto
 					Price:         price.String(),
 					TotalQuantity: totalQuantity.String(),
 					OrderCount:    int32(len(orders)),
+					UserAddress:   orders[0].UserAddress(),
 				})
 			}
 		}
@@ -543,6 +544,7 @@ func (s *GRPCOrderBookService) GetOrderBookState(ctx context.Context, req *proto
 					Price:         price.String(),
 					TotalQuantity: totalQuantity.String(),
 					OrderCount:    int32(len(orders)),
+					UserAddress:   orders[0].UserAddress(),
 				})
 			}
 		}

@@ -51,7 +51,7 @@ func TestRedisBackend_StoreGetUpdateDeleteOrder(t *testing.T) {
 	backend := NewRedisBackend(client, "test:orders:")
 
 	// Create test order
-	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "")
+	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Test storing order
@@ -84,7 +84,7 @@ func TestRedisBackend_AppendAndRemoveFromSide(t *testing.T) {
 	backend := NewRedisBackend(client, "test:sides:")
 
 	// Create test order
-	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "")
+	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Test appending to side
@@ -113,9 +113,9 @@ func TestRedisBackend_AppendToSide_MultipleOrdersSamePrice(t *testing.T) {
 	qty := fpdecimal.FromFloat(1.0)
 
 	// Create orders
-	order1, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "")
+	order1, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
-	order2, err := core.NewLimitOrder("order-2", core.Buy, qty, price, core.GTC, "")
+	order2, err := core.NewLimitOrder("order-2", core.Buy, qty, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Store orders
@@ -193,7 +193,7 @@ func TestRedisBackend_BasicOperations(t *testing.T) {
 	orderID := "test-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Initially should be nil
@@ -235,13 +235,13 @@ func TestRedisBackend_StopBookInterface(t *testing.T) {
 	backend := NewRedisBackend(client, "test:testrstopbook")
 
 	// 1. Create some stop orders
-	buyStopOrder1, err := core.NewStopLimitOrder("stop-buy-1", core.Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(100.0), fpdecimal.FromFloat(105.0), "")
+	buyStopOrder1, err := core.NewStopLimitOrder("stop-buy-1", core.Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(100.0), fpdecimal.FromFloat(105.0), "", "test_user")
 	require.NoError(t, err)
-	buyStopOrder2, err := core.NewStopLimitOrder("stop-buy-2", core.Buy, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(99.0), fpdecimal.FromFloat(104.0), "")
+	buyStopOrder2, err := core.NewStopLimitOrder("stop-buy-2", core.Buy, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(99.0), fpdecimal.FromFloat(104.0), "", "test_user")
 	require.NoError(t, err)
-	sellStopOrder1, err := core.NewStopLimitOrder("stop-sell-1", core.Sell, fpdecimal.FromFloat(4.0), fpdecimal.FromFloat(110.0), fpdecimal.FromFloat(100.0), "")
+	sellStopOrder1, err := core.NewStopLimitOrder("stop-sell-1", core.Sell, fpdecimal.FromFloat(4.0), fpdecimal.FromFloat(110.0), fpdecimal.FromFloat(100.0), "", "test_user")
 	require.NoError(t, err)
-	sellStopOrder2, err := core.NewStopLimitOrder("stop-sell-2", core.Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(112.0), fpdecimal.FromFloat(101.0), "")
+	sellStopOrder2, err := core.NewStopLimitOrder("stop-sell-2", core.Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(112.0), fpdecimal.FromFloat(101.0), "", "test_user")
 	require.NoError(t, err)
 
 	// 2. Store the orders

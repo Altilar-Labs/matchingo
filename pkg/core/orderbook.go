@@ -680,6 +680,7 @@ func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
 			stopOrder.Price(),
 			stopOrder.TIF(),
 			stopOrder.OCO(),
+			stopOrder.UserAddress(),
 		)
 		if err != nil {
 			ob.backend.DeleteOrder(stopOrder.ID())
@@ -811,6 +812,7 @@ func (ob *OrderBook) triggerStopOrder(order *Order) {
 		order.Price(),
 		order.TIF(),
 		order.OCO(),
+		order.UserAddress(),
 	)
 	if err != nil {
 		// Log error but continue processing
@@ -963,11 +965,12 @@ func convertTrades(trades []TradeOrder) []messaging.Trade {
 		}
 
 		converted[i] = messaging.Trade{
-			OrderID:  trade.OrderID,
-			Role:     role,
-			Price:    formatDecimal(trade.Price),
-			Quantity: formatDecimal(trade.Quantity),
-			IsQuote:  trade.IsQuote,
+			OrderID:     trade.OrderID,
+			Role:        role,
+			Price:       formatDecimal(trade.Price),
+			Quantity:    formatDecimal(trade.Quantity),
+			IsQuote:     trade.IsQuote,
+			UserAddress: trade.UserAddress,
 		}
 	}
 	return converted

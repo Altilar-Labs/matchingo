@@ -64,6 +64,7 @@ func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error 
 		Quantity:          done.Quantity,
 		Processed:         done.Processed,
 		Left:              done.Left,
+		UserAddress:       done.UserAddress,
 	}
 
 	// Convert trades to proto format
@@ -71,11 +72,12 @@ func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error 
 		protoMsg.Trades = make([]*orderbookpb.Trade, 0, len(done.Trades))
 		for _, trade := range done.Trades {
 			protoMsg.Trades = append(protoMsg.Trades, &orderbookpb.Trade{
-				OrderId:  trade.OrderID,
-				Role:     trade.Role,
-				Price:    trade.Price,
-				Quantity: trade.Quantity,
-				IsQuote:  trade.IsQuote,
+				OrderId:     trade.OrderID,
+				Role:        trade.Role,
+				Price:       trade.Price,
+				Quantity:    trade.Quantity,
+				IsQuote:     trade.IsQuote,
+				UserAddress: trade.UserAddress,
 			})
 		}
 	}
@@ -156,6 +158,7 @@ func (q *QueueMessageConsumer) ConsumeDoneMessages(handler func(*messaging.DoneM
 				Quantity:     protoMsg.Quantity,
 				Processed:    protoMsg.Processed,
 				Left:         protoMsg.Left,
+				UserAddress:  protoMsg.UserAddress,
 			}
 
 			// Convert trades
@@ -163,11 +166,12 @@ func (q *QueueMessageConsumer) ConsumeDoneMessages(handler func(*messaging.DoneM
 				doneMsg.Trades = make([]messaging.Trade, 0, len(protoMsg.Trades))
 				for _, trade := range protoMsg.Trades {
 					doneMsg.Trades = append(doneMsg.Trades, messaging.Trade{
-						OrderID:  trade.OrderId,
-						Role:     trade.Role,
-						Price:    trade.Price,
-						Quantity: trade.Quantity,
-						IsQuote:  trade.IsQuote,
+						OrderID:     trade.OrderId,
+						Role:        trade.Role,
+						Price:       trade.Price,
+						Quantity:    trade.Quantity,
+						IsQuote:     trade.IsQuote,
+						UserAddress: trade.UserAddress,
 					})
 				}
 			}
