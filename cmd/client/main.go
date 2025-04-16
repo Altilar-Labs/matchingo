@@ -230,22 +230,24 @@ func createOrder(ctx context.Context, client proto.OrderBookServiceClient, args 
 	orderType := flag.String("type", "", "Order type (MARKET/LIMIT/STOP/STOP_LIMIT)")
 	quantity := flag.String("qty", "", "Order quantity")
 	price := flag.String("price", "", "Order price")
+	userAddress := flag.String("user", "", "User's wallet address")
 	flag.Parse()
 
 	// If no flags are set, use positional arguments
-	if *bookName == "" && len(args) >= 6 {
+	if *bookName == "" && len(args) >= 7 {
 		bookName = &args[0]
 		side = &args[1]
 		orderType = &args[2]
 		quantity = &args[3]
 		price = &args[4]
 		orderID = &args[5]
+		userAddress = &args[6]
 	}
 
 	// Validate required fields
-	if *bookName == "" || *orderID == "" || *side == "" || *orderType == "" || *quantity == "" {
-		fmt.Println("Usage: create-order <book> <side> <type> <quantity> <price> <id>")
-		fmt.Println("   or: create-order --book=<name> --id=<id> --side=<side> --type=<type> --qty=<quantity> --price=<price>")
+	if *bookName == "" || *orderID == "" || *side == "" || *orderType == "" || *quantity == "" || *userAddress == "" {
+		fmt.Println("Usage: create-order <book> <side> <type> <quantity> <price> <id> <user_address>")
+		fmt.Println("   or: create-order --book=<name> --id=<id> --side=<side> --type=<type> --qty=<quantity> --price=<price> --user=<user_address>")
 		os.Exit(1)
 	}
 
@@ -284,6 +286,7 @@ func createOrder(ctx context.Context, client proto.OrderBookServiceClient, args 
 		Quantity:      *quantity,
 		Price:         *price,
 		TimeInForce:   proto.TimeInForce_GTC,
+		UserAddress:   *userAddress,
 	}
 
 	// Call RPC
@@ -380,14 +383,16 @@ func getOrderBookState(ctx context.Context, client proto.OrderBookServiceClient,
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.AlignRight)
 
 	// Print headers with consistent spacing
-	fmt.Fprintf(w, "%15s|%15s|%15s|%s\n",
+	fmt.Fprintf(w, "%15s|%15s|%15s|%15s|%s\n",
 		cyan("Price"),
 		cyan("Quantity"),
 		cyan("Orders"),
+		cyan("Address"),
 		cyan("Side"))
 
 	// Print separator with matching column widths
-	fmt.Fprintf(w, "%15s|%15s|%15s|%s\n",
+	fmt.Fprintf(w, "%15s|%15s|%15s|%15s|%s\n",
+		"---------------",
 		"---------------",
 		"---------------",
 		"---------------",
@@ -397,15 +402,17 @@ func getOrderBookState(ctx context.Context, client proto.OrderBookServiceClient,
 	for _, level := range resp.Asks {
 		price, _ := strconv.ParseFloat(level.Price, 64)
 		qty, _ := strconv.ParseFloat(level.TotalQuantity, 64)
-		fmt.Fprintf(w, "%15.3f|%15.3f|%15d|%s\n",
+		fmt.Fprintf(w, "%15.3f|%15.3f|%15d|%15s|%s\n",
 			price,
 			qty,
 			level.OrderCount,
+			level.UserAddress,
 			red("ASK"))
 	}
 
 	// Print separator between asks and bids
-	fmt.Fprintf(w, "%15s|%15s|%15s|%s\n",
+	fmt.Fprintf(w, "%15s|%15s|%15s|%15s|%s\n",
+		"---------------",
 		"---------------",
 		"---------------",
 		"---------------",
@@ -415,10 +422,11 @@ func getOrderBookState(ctx context.Context, client proto.OrderBookServiceClient,
 	for _, level := range resp.Bids {
 		price, _ := strconv.ParseFloat(level.Price, 64)
 		qty, _ := strconv.ParseFloat(level.TotalQuantity, 64)
-		fmt.Fprintf(w, "%15.3f|%15.3f|%15d|%s\n",
+		fmt.Fprintf(w, "%15.3f|%15.3f|%15d|%15s|%s\n",
 			price,
 			qty,
 			level.OrderCount,
+			level.UserAddress,
 			green("BID"))
 	}
 
@@ -437,14 +445,14 @@ func printUsage() {
 	fmt.Println("  get-book <name>")
 	fmt.Println("  list-books [--limit=N] [--offset=N]")
 	fmt.Println("  delete-book <name>")
-	fmt.Println("  create-order <book> <side> <type> <quantity> <price> <id>")
+	fmt.Println("  create-order <book> <side> <type> <quantity> <price> <id> <user_address>")
 	fmt.Println("  get-order <book> <id>")
 	fmt.Println("  cancel-order <book> <id>")
 	fmt.Println("  get-state <book>")
 	fmt.Println("\nExamples:")
 	fmt.Println("  create-book mybook --backend=memory")
-	fmt.Println("  create-order default SELL LIMIT 0.5 100.0 sell1")
-	fmt.Println("  create-order default BUY MARKET 1.0 0.0 buy1")
+	fmt.Println("  create-order default SELL LIMIT 0.5 100.0 sell1 0x1234567890123456789012345678901234567890")
+	fmt.Println("  create-order default BUY MARKET 1.0 0.0 buy1 0x1234567890123456789012345678901234567890")
 	fmt.Println("  get-order default sell1")
 	fmt.Println("  cancel-order default sell1")
 	fmt.Println("  get-state default")

@@ -25,5 +25,5 @@ type OrderPlacer interface {
 // MarketMakerStrategy defines the interface for market making strategies
 type MarketMakerStrategy interface {
 	// CalculateOrders calculates the orders to be placed based on the current price
-	CalculateOrders(ctx context.Context, currentPrice float64) ([]*pb.CreateOrderRequest, error)
+	CalculateOrders(ctx context.Context, currentPrice float64, userAddress string) ([]*pb.CreateOrderRequest, error)
 }

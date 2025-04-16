@@ -27,7 +27,7 @@ func TestMarketMakerStrategy(t *testing.T) {
 	// Test case 1: Verify basic order creation
 	t.Run("Basic order creation", func(t *testing.T) {
 		ctx := context.Background()
-		orders, err := strategy.CalculateOrders(ctx, 50000.0)
+		orders, err := strategy.CalculateOrders(ctx, 50000.0, "test-mm")
 		if err != nil {
 			t.Fatalf("CalculateOrders failed: %v", err)
 		}
@@ -58,7 +58,7 @@ func TestMarketMakerStrategy(t *testing.T) {
 	// Test case 2: Verify order price spacing
 	t.Run("Order price spacing", func(t *testing.T) {
 		ctx := context.Background()
-		orders, err := strategy.CalculateOrders(ctx, 50000.0)
+		orders, err := strategy.CalculateOrders(ctx, 50000.0, "test-mm")
 		if err != nil {
 			t.Fatalf("CalculateOrders failed: %v", err)
 		}

@@ -47,7 +47,12 @@ func main() {
 	strategy := marketmaker.NewLayeredSymmetricQuoting(cfg, logger)
 
 	// Create and start the market maker service
-	mm := marketmaker.NewMarketMaker(cfg, logger, orderPlacer, priceFetcher, strategy)
+	mm, err := marketmaker.NewMarketMaker(cfg, logger, orderPlacer, priceFetcher, strategy)
+	if err != nil {
+		logger.Error("Failed to create market maker", "error", err)
+		os.Exit(1)
+	}
+
 	if err := mm.Start(ctx); err != nil {
 		logger.Error("Failed to start market maker", "error", err)
 		os.Exit(1)

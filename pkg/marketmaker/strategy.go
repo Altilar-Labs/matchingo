@@ -26,7 +26,7 @@ func NewLayeredSymmetricQuoting(cfg *Config, logger *slog.Logger) MarketMakerStr
 }
 
 // CalculateOrders implements MarketMakerStrategy
-func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPrice float64) ([]*pb.CreateOrderRequest, error) {
+func (s *LayeredSymmetricQuoting) CalculateOrders(ctx context.Context, currentPrice float64, userAddress string) ([]*pb.CreateOrderRequest, error) {
 	baseHalfSpread := currentPrice * (s.cfg.BaseSpreadPercent / 2 / 100)
 	basePriceStep := currentPrice * (s.cfg.PriceStepPercent / 100)
 

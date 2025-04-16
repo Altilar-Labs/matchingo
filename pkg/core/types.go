@@ -10,27 +10,30 @@ import (
 
 // TradeOrder structure
 type TradeOrder struct {
-	OrderID  string
-	Role     Role
-	Price    fpdecimal.Decimal
-	IsQuote  bool
-	Quantity fpdecimal.Decimal
+	OrderID     string
+	Role        Role
+	Price       fpdecimal.Decimal
+	IsQuote     bool
+	Quantity    fpdecimal.Decimal
+	UserAddress string
 }
 
 // MarshalJSON implements Marshaler interface
 func (t *TradeOrder) MarshalJSON() ([]byte, error) {
 	customStruct := struct {
-		OrderID  string `json:"orderID"`
-		Role     Role   `json:"role"`
-		IsQuote  bool   `json:"isQuote"`
-		Price    string `json:"price"`
-		Quantity string `json:"quantity"`
+		OrderID     string `json:"orderID"`
+		Role        Role   `json:"role"`
+		IsQuote     bool   `json:"isQuote"`
+		Price       string `json:"price"`
+		Quantity    string `json:"quantity"`
+		UserAddress string `json:"userAddress"`
 	}{
-		OrderID:  t.OrderID,
-		Role:     t.Role,
-		IsQuote:  t.IsQuote,
-		Price:    t.Price.String(),
-		Quantity: t.Quantity.String(),
+		OrderID:     t.OrderID,
+		Role:        t.Role,
+		IsQuote:     t.IsQuote,
+		Price:       t.Price.String(),
+		Quantity:    t.Quantity.String(),
+		UserAddress: t.UserAddress,
 	}
 	return json.Marshal(customStruct)
 }
@@ -199,17 +202,19 @@ func (d *Done) ToMessagingDoneMessage() *messaging.DoneMessage {
 		Quantity:     formatDecimal(d.Quantity),
 		Processed:    formatDecimal(d.Processed),
 		Left:         formatDecimal(d.Left),
+		UserAddress:  d.Order.UserAddress(),
 	}
 }
 
 // Helper function to create trade orders
 func newTradeOrder(order *Order, quantity, price fpdecimal.Decimal) TradeOrder {
 	return TradeOrder{
-		OrderID:  order.ID(),
-		Role:     order.Role(),
-		Price:    price,
-		IsQuote:  order.IsQuote(),
-		Quantity: quantity,
+		OrderID:     order.ID(),
+		Role:        order.Role(),
+		Price:       price,
+		IsQuote:     order.IsQuote(),
+		Quantity:    quantity,
+		UserAddress: order.UserAddress(),
 	}
 }
 

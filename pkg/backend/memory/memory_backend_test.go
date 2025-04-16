@@ -28,7 +28,7 @@ func TestMemoryBackend_OrderOperations(t *testing.T) {
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
 
-	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Test StoreOrder
@@ -73,13 +73,13 @@ func TestMemoryBackend_AppendToSide(t *testing.T) {
 	buyOrderID := "buy-123"
 	buyPrice := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, quantity, buyPrice, core.GTC, "")
+	buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, quantity, buyPrice, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Create a sell order
 	sellOrderID := "sell-123"
 	sellPrice := fpdecimal.FromFloat(102.0)
-	sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, quantity, sellPrice, core.GTC, "")
+	sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, quantity, sellPrice, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Store orders
@@ -98,7 +98,7 @@ func TestMemoryBackend_RemoveFromSide(t *testing.T) {
 	orderID := "buy-123"
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
-	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "")
+	order, err := core.NewLimitOrder(orderID, core.Buy, quantity, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Store order
@@ -129,9 +129,9 @@ func TestMemoryBackend_OCOOperations(t *testing.T) {
 	price := fpdecimal.FromFloat(100.0)
 	quantity := fpdecimal.FromFloat(10.0)
 
-	order1, err := core.NewLimitOrder(order1ID, core.Buy, quantity, price, core.GTC, order2ID)
+	order1, err := core.NewLimitOrder(order1ID, core.Buy, quantity, price, core.GTC, order2ID, "test_user")
 	require.NoError(t, err)
-	order2, err := core.NewLimitOrder(order2ID, core.Sell, quantity, price, core.GTC, order1ID)
+	order2, err := core.NewLimitOrder(order2ID, core.Sell, quantity, price, core.GTC, order1ID, "test_user")
 	require.NoError(t, err)
 
 	// Store orders
@@ -160,9 +160,9 @@ func TestMemoryBackend_OCOOperations(t *testing.T) {
 	// Test with a new pair of orders to check the other direction
 	order3ID := "order-3"
 	order4ID := "order-4"
-	order3, err := core.NewLimitOrder(order3ID, core.Buy, quantity, price, core.GTC, order4ID)
+	order3, err := core.NewLimitOrder(order3ID, core.Buy, quantity, price, core.GTC, order4ID, "test_user")
 	require.NoError(t, err)
-	order4, err := core.NewLimitOrder(order4ID, core.Sell, quantity, price, core.GTC, order3ID)
+	order4, err := core.NewLimitOrder(order4ID, core.Sell, quantity, price, core.GTC, order3ID, "test_user")
 	require.NoError(t, err)
 
 	_ = backend.StoreOrder(order3)
@@ -184,7 +184,7 @@ func TestMemoryBackend_StopBookOperations(t *testing.T) {
 	stopPrice := fpdecimal.FromFloat(105.0)
 	quantity := fpdecimal.FromFloat(10.0)
 
-	order, err := core.NewStopLimitOrder(orderID, core.Buy, quantity, price, stopPrice, "")
+	order, err := core.NewStopLimitOrder(orderID, core.Buy, quantity, price, stopPrice, "", "test_user")
 	require.NoError(t, err)
 
 	// Store order
@@ -247,7 +247,7 @@ func TestAppendAndRemoveOrder(t *testing.T) {
 	backend := NewMemoryBackend()
 	price := fpdecimal.FromFloat(100.0)
 	qty := fpdecimal.FromFloat(1.0)
-	order, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "")
+	order, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	backend.AppendToSide(core.Buy, order)
@@ -280,9 +280,9 @@ func TestOrderSide_RemoveNonExistent(t *testing.T) {
 	backend := NewMemoryBackend()
 	price := fpdecimal.FromFloat(100.0)
 	qty := fpdecimal.FromFloat(1.0)
-	order1, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "")
+	order1, err := core.NewLimitOrder("order-1", core.Buy, qty, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
-	order2, err := core.NewLimitOrder("order-2", core.Buy, qty, price, core.GTC, "") // Different order
+	order2, err := core.NewLimitOrder("order-2", core.Buy, qty, price, core.GTC, "", "test_user") // Different order
 	require.NoError(t, err)
 
 	backend.AppendToSide(core.Buy, order1)
@@ -304,11 +304,11 @@ func TestPriceSorting(t *testing.T) {
 	backend := NewMemoryBackend()
 
 	// Add orders at different prices
-	order100, err := core.NewLimitOrder("order-100", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(100), core.GTC, "")
+	order100, err := core.NewLimitOrder("order-100", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(100), core.GTC, "", "test_user")
 	require.NoError(t, err)
-	order105, err := core.NewLimitOrder("order-105", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(105), core.GTC, "")
+	order105, err := core.NewLimitOrder("order-105", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(105), core.GTC, "", "test_user")
 	require.NoError(t, err)
-	order95, err := core.NewLimitOrder("order-95", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(95), core.GTC, "")
+	order95, err := core.NewLimitOrder("order-95", core.Sell, fpdecimal.FromInt(1), fpdecimal.FromInt(95), core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	backend.AppendToSide(core.Sell, order100)
@@ -327,9 +327,9 @@ func TestPriceSorting(t *testing.T) {
 	assert.True(t, prices[2].Equal(fpdecimal.FromInt(105)), "Expected third price 105, got %s", prices[2])
 
 	// Add buy orders
-	buyOrder100, err := core.NewLimitOrder("buy-100", core.Buy, fpdecimal.FromInt(1), fpdecimal.FromInt(100), core.GTC, "")
+	buyOrder100, err := core.NewLimitOrder("buy-100", core.Buy, fpdecimal.FromInt(1), fpdecimal.FromInt(100), core.GTC, "", "test_user")
 	require.NoError(t, err)
-	buyOrder95, err := core.NewLimitOrder("buy-95", core.Buy, fpdecimal.FromInt(1), fpdecimal.FromInt(95), core.GTC, "")
+	buyOrder95, err := core.NewLimitOrder("buy-95", core.Buy, fpdecimal.FromInt(1), fpdecimal.FromInt(95), core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	backend.AppendToSide(core.Buy, buyOrder100)
@@ -351,7 +351,7 @@ func TestStopBook(t *testing.T) {
 	stopPrice := fpdecimal.FromFloat(105.0)
 	limitPrice := fpdecimal.FromFloat(100.0)
 	qty := fpdecimal.FromFloat(1.0)
-	stopOrder, err := core.NewStopLimitOrder("stop-1", core.Buy, qty, limitPrice, stopPrice, "")
+	stopOrder, err := core.NewStopLimitOrder("stop-1", core.Buy, qty, limitPrice, stopPrice, "", "test_user")
 	require.NoError(t, err)
 
 	backend.AppendToStopBook(stopOrder)
@@ -377,7 +377,7 @@ func TestStoreGetUpdateDeleteOrder(t *testing.T) {
 	backend := NewMemoryBackend()
 	price := fpdecimal.FromFloat(100.0)
 	qty := fpdecimal.FromFloat(1.0)
-	order, err := core.NewLimitOrder("order-crud", core.Buy, qty, price, core.GTC, "")
+	order, err := core.NewLimitOrder("order-crud", core.Buy, qty, price, core.GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Store
@@ -468,7 +468,7 @@ func TestMemoryBackend_StopOrderHandling(t *testing.T) {
 	stopPrice, _ := fpdecimal.FromString("100.0")
 	limitPrice, _ := fpdecimal.FromString("101.0")
 	qty, _ := fpdecimal.FromString("1.0")
-	stopOrder, err := core.NewStopLimitOrder("stop1", core.Buy, qty, limitPrice, stopPrice, "")
+	stopOrder, err := core.NewStopLimitOrder("stop1", core.Buy, qty, limitPrice, stopPrice, "", "test_user")
 	assert.NoError(t, err)
 
 	// Test storing stop order
@@ -501,17 +501,17 @@ func TestMemoryBackend_OrderBookOperations(t *testing.T) {
 	// Create test orders
 	qty1, _ := fpdecimal.FromString("1.0")
 	price1, _ := fpdecimal.FromString("100.0")
-	buyOrder1, err := core.NewLimitOrder("buy1", core.Buy, qty1, price1, core.GTC, "")
+	buyOrder1, err := core.NewLimitOrder("buy1", core.Buy, qty1, price1, core.GTC, "", "test_user")
 	assert.NoError(t, err)
 
 	qty2, _ := fpdecimal.FromString("2.0")
 	price2, _ := fpdecimal.FromString("99.0")
-	buyOrder2, err := core.NewLimitOrder("buy2", core.Buy, qty2, price2, core.GTC, "")
+	buyOrder2, err := core.NewLimitOrder("buy2", core.Buy, qty2, price2, core.GTC, "", "test_user")
 	assert.NoError(t, err)
 
 	qty3, _ := fpdecimal.FromString("1.5")
 	price3, _ := fpdecimal.FromString("101.0")
-	sellOrder1, err := core.NewLimitOrder("sell1", core.Sell, qty3, price3, core.GTC, "")
+	sellOrder1, err := core.NewLimitOrder("sell1", core.Sell, qty3, price3, core.GTC, "", "test_user")
 	assert.NoError(t, err)
 
 	// Test storing orders
@@ -557,7 +557,7 @@ func TestMemoryBackend_OrderUpdates(t *testing.T) {
 	// Create and store an order
 	qty, _ := fpdecimal.FromString("1.0")
 	price, _ := fpdecimal.FromString("100.0")
-	order, err := core.NewLimitOrder("test1", core.Buy, qty, price, core.GTC, "")
+	order, err := core.NewLimitOrder("test1", core.Buy, qty, price, core.GTC, "", "test_user")
 	assert.NoError(t, err)
 	assert.NoError(t, backend.StoreOrder(order))
 
@@ -577,12 +577,12 @@ func TestMemoryBackend_OCOOrders(t *testing.T) {
 	// Create OCO orders
 	qty1, _ := fpdecimal.FromString("1.0")
 	price1, _ := fpdecimal.FromString("100.0")
-	order1, err := core.NewLimitOrder("oco1", core.Buy, qty1, price1, core.GTC, "oco2")
+	order1, err := core.NewLimitOrder("oco1", core.Buy, qty1, price1, core.GTC, "oco2", "test_user")
 	assert.NoError(t, err)
 
 	qty2, _ := fpdecimal.FromString("1.0")
 	price2, _ := fpdecimal.FromString("110.0")
-	order2, err := core.NewLimitOrder("oco2", core.Sell, qty2, price2, core.GTC, "oco1")
+	order2, err := core.NewLimitOrder("oco2", core.Sell, qty2, price2, core.GTC, "oco1", "test_user")
 	assert.NoError(t, err)
 
 	// Store orders

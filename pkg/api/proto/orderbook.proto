@@ -91,6 +91,7 @@ message CreateOrderRequest {
   TimeInForce time_in_force = 7;
   string stop_price = 8;  // Only for stop orders
   string oco_id = 9;     // Only for OCO orders
+  string user_address = 10; // User's wallet address
 }
 
 // Types of orders
@@ -131,6 +132,7 @@ message OrderResponse {
   google.protobuf.Timestamp updated_at = 13;
   repeated Fill fills = 14;
   string oco_id = 15;
+  string user_address = 16; // User's wallet address
 }
 
 // Status of an order
@@ -182,6 +184,7 @@ message PriceLevel {
   string price = 1;
   string total_quantity = 2;
   int32 order_count = 3;
+  string user_address = 4; // User's wallet address
 }
 
 // Represents a trade that has occurred
@@ -191,6 +194,7 @@ message Trade {
   string price = 3;
   string quantity = 4;
   bool is_quote = 5;
+  string user_address = 6; // User's wallet address
 }
 
 // DoneMessage represents the message structure for the Done object
@@ -206,4 +210,5 @@ message DoneMessage {
   string quantity = 8;
   string processed = 9;
   string left = 10;
+  string user_address = 11; // User's wallet address
 } 

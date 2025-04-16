@@ -95,7 +95,8 @@ func TestMarketMakerIntegration(t *testing.T) {
 	strategy := marketmaker.NewLayeredSymmetricQuoting(mmConfig, logger)
 
 	// Create the market maker with our test components
-	mm := marketmaker.NewMarketMaker(mmConfig, logger, orderPlacer, mockPriceFetcher, strategy)
+	mm, err := marketmaker.NewMarketMaker(mmConfig, logger, orderPlacer, mockPriceFetcher, strategy)
+	require.NoError(t, err, "Failed to create market maker")
 
 	// Run subtests
 	t.Run("MarketMakerLifecycle", func(t *testing.T) {
@@ -265,7 +266,8 @@ func TestMarketMakerWithRealDependencies(t *testing.T) {
 		strategy := marketmaker.NewLayeredSymmetricQuoting(mmConfig, logger)
 
 		// Create the market maker
-		mm := marketmaker.NewMarketMaker(mmConfig, logger, orderPlacer, mockPriceFetcher, strategy)
+		mm, err := marketmaker.NewMarketMaker(mmConfig, logger, orderPlacer, mockPriceFetcher, strategy)
+		require.NoError(t, err, "Failed to create market maker")
 
 		// Start the market maker
 		err = mm.Start(ctx)

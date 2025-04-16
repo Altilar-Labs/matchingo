@@ -20,13 +20,15 @@ type DoneMessage struct {
 	Quantity     string
 	Processed    string
 	Left         string
+	UserAddress  string // User's wallet address
 }
 
 // Trade represents a single trade execution
 type Trade struct {
-	OrderID  string
-	Role     string
-	Price    string
-	Quantity string
-	IsQuote  bool
+	OrderID     string
+	Role        string
+	Price       string
+	Quantity    string
+	IsQuote     bool
+	UserAddress string // User's wallet address
 }

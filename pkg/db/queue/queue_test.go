@@ -83,25 +83,28 @@ func (m *mockPartitionConsumer) Resume() {}
 
 func TestQueueMessageSender_SendDoneMessage(t *testing.T) {
 	// Create a test message
+	userAddress := "0x1234567890123456789012345678901234567890"
 	doneMessage := &messaging.DoneMessage{
 		OrderID:      "test-order-1",
 		ExecutedQty:  "100.5",
 		RemainingQty: "50.0",
 		Trades: []messaging.Trade{
 			{
-				OrderID:  "trade-1",
-				Role:     "MAKER",
-				Price:    "100.0",
-				Quantity: "50.0",
-				IsQuote:  true,
+				OrderID:     "trade-1",
+				Role:        "MAKER",
+				Price:       "100.0",
+				Quantity:    "50.0",
+				IsQuote:     true,
+				UserAddress: userAddress,
 			},
 		},
-		Canceled:  []string{"cancel-1", "cancel-2"},
-		Activated: []string{"activate-1"},
-		Stored:    true,
-		Quantity:  "150.5",
-		Processed: "100.5",
-		Left:      "50.0",
+		Canceled:    []string{"cancel-1", "cancel-2"},
+		Activated:   []string{"activate-1"},
+		Stored:      true,
+		Quantity:    "150.5",
+		Processed:   "100.5",
+		Left:        "50.0",
+		UserAddress: userAddress,
 	}
 
 	// Create mock producer
@@ -142,6 +145,7 @@ func TestQueueMessageSender_SendDoneMessage(t *testing.T) {
 	require.Equal(t, doneMessage.Processed, protoMsg.Processed)
 	require.Equal(t, doneMessage.Left, protoMsg.Left)
 	require.Equal(t, doneMessage.Stored, protoMsg.Stored)
+	require.Equal(t, doneMessage.UserAddress, protoMsg.UserAddress)
 	require.Equal(t, len(doneMessage.Trades), len(protoMsg.Trades))
 	require.Equal(t, len(doneMessage.Canceled), len(protoMsg.Canceled))
 	require.Equal(t, len(doneMessage.Activated), len(protoMsg.Activated))
@@ -149,25 +153,28 @@ func TestQueueMessageSender_SendDoneMessage(t *testing.T) {
 
 func TestQueueMessageConsumer_ConsumeDoneMessages(t *testing.T) {
 	// Create a test message
+	userAddress := "0x1234567890123456789012345678901234567890"
 	expectedMessage := &messaging.DoneMessage{
 		OrderID:      "test-order-1",
 		ExecutedQty:  "100.5",
 		RemainingQty: "50.0",
 		Trades: []messaging.Trade{
 			{
-				OrderID:  "trade-1",
-				Role:     "MAKER",
-				Price:    "100.0",
-				Quantity: "50.0",
-				IsQuote:  true,
+				OrderID:     "trade-1",
+				Role:        "MAKER",
+				Price:       "100.0",
+				Quantity:    "50.0",
+				IsQuote:     true,
+				UserAddress: userAddress,
 			},
 		},
-		Canceled:  []string{"cancel-1", "cancel-2"},
-		Activated: []string{"activate-1"},
-		Stored:    true,
-		Quantity:  "150.5",
-		Processed: "100.5",
-		Left:      "50.0",
+		Canceled:    []string{"cancel-1", "cancel-2"},
+		Activated:   []string{"activate-1"},
+		Stored:      true,
+		Quantity:    "150.5",
+		Processed:   "100.5",
+		Left:        "50.0",
+		UserAddress: userAddress,
 	}
 
 	// Create a mock consumer
@@ -209,6 +216,7 @@ func TestQueueMessageConsumer_ConsumeDoneMessages(t *testing.T) {
 		assert.Equal(t, expectedMessage.Processed, msg.Processed)
 		assert.Equal(t, expectedMessage.Left, msg.Left)
 		assert.Equal(t, expectedMessage.Stored, msg.Stored)
+		assert.Equal(t, expectedMessage.UserAddress, msg.UserAddress)
 		assert.Equal(t, len(expectedMessage.Trades), len(msg.Trades))
 		assert.Equal(t, len(expectedMessage.Canceled), len(msg.Canceled))
 		assert.Equal(t, len(expectedMessage.Activated), len(msg.Activated))
@@ -233,6 +241,7 @@ func mustMarshalProto(t *testing.T, msg *messaging.DoneMessage) []byte {
 		Quantity:          msg.Quantity,
 		Processed:         msg.Processed,
 		Left:              msg.Left,
+		UserAddress:       msg.UserAddress,
 	}
 
 	// Convert trades to proto format
@@ -240,11 +249,12 @@ func mustMarshalProto(t *testing.T, msg *messaging.DoneMessage) []byte {
 		protoMsg.Trades = make([]*orderbookpb.Trade, 0, len(msg.Trades))
 		for _, trade := range msg.Trades {
 			protoMsg.Trades = append(protoMsg.Trades, &orderbookpb.Trade{
-				OrderId:  trade.OrderID,
-				Role:     trade.Role,
-				Price:    trade.Price,
-				Quantity: trade.Quantity,
-				IsQuote:  trade.IsQuote,
+				OrderId:     trade.OrderID,
+				Role:        trade.Role,
+				Price:       trade.Price,
+				Quantity:    trade.Quantity,
+				IsQuote:     trade.IsQuote,
+				UserAddress: trade.UserAddress,
 			})
 		}
 	}
