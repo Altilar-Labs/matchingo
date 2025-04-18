@@ -31,12 +31,6 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Generated files
-*.pb.go
-*.pb.gw.go
-*.swagger.json
-*.swagger.yaml
-
 # Log files
 *.log
 

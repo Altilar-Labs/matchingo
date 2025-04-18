@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -12,89 +11,32 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/erain9/matchingo/config"
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/erain9/matchingo/pkg/db/queue"
-	"github.com/erain9/matchingo/pkg/messaging"
+	"github.com/erain9/matchingo/pkg/messaging/kafka"
 	"github.com/erain9/matchingo/pkg/server"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	"gopkg.in/yaml.v3"
-)
-
-// Config represents the application configuration
-type Config struct {
-	Server struct {
-		GRPCAddr  string `yaml:"grpc_addr"`
-		HTTPAddr  string `yaml:"http_addr"`
-		LogLevel  string `yaml:"log_level"`
-		LogFormat string `yaml:"log_format"`
-	} `yaml:"server"`
-
-	Redis struct {
-		Addr     string `yaml:"addr"`
-		Password string `yaml:"password"`
-		DB       int    `yaml:"db"`
-	} `yaml:"redis"`
-
-	Kafka struct {
-		BrokerAddr string `yaml:"broker_addr"`
-		Topic      string `yaml:"topic"`
-	} `yaml:"kafka"`
-}
-
-// Default configuration values
-var (
-	configFile = flag.String("config", "", "Path to config file (YAML)")
-	grpcPort   = flag.Int("grpc_port", 50051, "The gRPC server port")
-	httpPort   = flag.Int("http_port", 8080, "The HTTP server port")
-	logLevel   = flag.String("log_level", "info", "Log level: debug, info, warn, error")
-	logFormat  = flag.String("log_format", "pretty", "Log format: json, pretty")
 )
 
 func main() {
-	// Parse command line flags
-	flag.Parse()
-
-	// Create default configuration
-	config := Config{}
-	config.Server.GRPCAddr = fmt.Sprintf(":%d", *grpcPort)
-	config.Server.HTTPAddr = fmt.Sprintf(":%d", *httpPort)
-	config.Server.LogLevel = *logLevel
-	config.Server.LogFormat = *logFormat
-	config.Redis.Addr = "localhost:6379"
-	config.Kafka.BrokerAddr = "localhost:9092"
-	config.Kafka.Topic = "test-msg-queue"
-
-	// Load configuration from file if specified
-	if *configFile != "" {
-		yamlFile, err := os.ReadFile(*configFile)
-		if err != nil {
-			log.Fatalf("Failed to read config file: %v", err)
-		}
-
-		// Parse YAML configuration
-		if err := yaml.Unmarshal(yamlFile, &config); err != nil {
-			log.Fatalf("Failed to parse config file: %v", err)
-		}
-
-		// Override Kafka and Redis configuration in package variables
-		queue.SetBrokerList(config.Kafka.BrokerAddr)
-		queue.SetTopic(config.Kafka.Topic)
-
-		// Log loaded configuration
-		log.Printf("Loaded configuration from %s", *configFile)
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	// Setup logging
-	level, err := zerolog.ParseLevel(config.Server.LogLevel)
+	level, err := zerolog.ParseLevel(cfg.Server.LogLevel)
 	if err != nil {
 		log.Fatalf("Invalid log level: %v", err)
 	}
 
 	// Configure global logger
 	logger := zerolog.New(os.Stdout).Level(level).With().Timestamp().Logger()
-	if config.Server.LogFormat == "pretty" {
+	if cfg.Server.LogFormat == "pretty" {
 		logger = logger.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
 	}
 
@@ -117,41 +59,53 @@ func main() {
 	// The consumer is for developer purpose which helps pretty print the message
 	// in the queue.
 	var kafkaConsumer *queue.QueueMessageConsumer
-	kafkaConsumer, err = queue.NewQueueMessageConsumer()
-	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to create Kafka consumer - continuing without Kafka support")
-	} else {
+	kafkaConsumer, err = kafka.SetupConsumer(ctx, logger)
+	if err == nil && kafkaConsumer != nil {
 		defer kafkaConsumer.Close()
-
-		// Start Kafka consumer in a goroutine
-		go func() {
-			logger.Info().Msg("Starting Kafka consumer")
-			err := kafkaConsumer.ConsumeDoneMessages(func(msg *messaging.DoneMessage) error {
-				logger.Info().
-					Str("order_id", msg.OrderID).
-					Str("executed_qty", msg.ExecutedQty).
-					Str("remaining_qty", msg.RemainingQty).
-					Strs("canceled", msg.Canceled).
-					Strs("activated", msg.Activated).
-					Bool("stored", msg.Stored).
-					Str("quantity", msg.Quantity).
-					Str("processed", msg.Processed).
-					Str("left", msg.Left).
-					Interface("trades", msg.Trades).
-					Msg("Received done message")
-				return nil
-			})
-			if err != nil {
-				logger.Error().Err(err).Msg("Kafka consumer error")
-			}
-		}()
 	}
 
+	// Setup gRPC server
+	grpcServer, err := setupGRPCServer(ctx, cfg, manager)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to setup gRPC server")
+	}
+
+	// Setup HTTP server
+	httpServer, err := setupHTTPServer(ctx, cfg, cfg.Server.GRPCAddr)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to setup HTTP server")
+	}
+
+	// Wait for interrupt signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	sig := <-sigCh
+
+	logger.Info().Str("signal", sig.String()).Msg("Received signal, shutting down")
+
+	// Graceful shutdown
+	grpcServer.GracefulStop()
+
+	// Create a context with timeout for HTTP server shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error().Err(err).Msg("HTTP server shutdown error")
+	}
+
+	logger.Info().Msg("Servers shutdown complete")
+}
+
+// setupGRPCServer initializes and starts a gRPC server
+func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.OrderBookManager) (*grpc.Server, error) {
+	logger := zerolog.Ctx(ctx)
+
 	// Start gRPC server
-	grpcAddr := config.Server.GRPCAddr
+	grpcAddr := cfg.Server.GRPCAddr
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
-		logger.Fatal().Err(err).Str("addr", grpcAddr).Msg("Failed to listen")
+		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
 	// Create gRPC server with the order book service
@@ -170,8 +124,15 @@ func main() {
 		}
 	}()
 
+	return grpcServer, nil
+}
+
+// setupHTTPServer initializes and starts an HTTP server
+func setupHTTPServer(ctx context.Context, cfg *config.Config, grpcAddr string) (*http.Server, error) {
+	logger := zerolog.Ctx(ctx)
+
 	// Start HTTP server for REST API (optional)
-	httpAddr := config.Server.HTTPAddr
+	httpAddr := cfg.Server.HTTPAddr
 	httpServer := &http.Server{
 		Addr: httpAddr,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -206,23 +167,5 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	sig := <-sigCh
-
-	logger.Info().Str("signal", sig.String()).Msg("Received signal, shutting down")
-
-	// Graceful shutdown
-	grpcServer.GracefulStop()
-
-	// Create a context with timeout for HTTP server shutdown
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		logger.Error().Err(err).Msg("HTTP server shutdown error")
-	}
-
-	logger.Info().Msg("Servers shutdown complete")
+	return httpServer, nil
 }
