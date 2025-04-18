@@ -74,7 +74,7 @@ Expected output should include the "default" order book.
 Create a buy limit order for 10 units at price 100.0:
 
 ```bash
-./bin/orderbook-client create-order default BUY LIMIT 10.0 100.0 order1
+./bin/orderbook-client create-order default BUY LIMIT 10.0 100.0 order1 0x1111111111111111111111111111111111111111
 ```
 
 Expected output:
@@ -106,10 +106,10 @@ View the current state of the order book:
 
 Expected output should show a buy order at price 100.0 with quantity 10.0:
 ```
- Price|Quantity|Orders|Side
----------------|---------------|---------------|----
----------------|---------------|---------------|----
-        100.000|         10.000|              1|BID
+          Price|       Quantity|         Orders|         Address|Side
+---------------|---------------|---------------|---------------|----
+---------------|---------------|---------------|---------------|----
+        100.000|         10.000|              1|0x1111111111111|BID
 ```
 
 ### Order Matching Scenarios
@@ -119,7 +119,7 @@ Expected output should show a buy order at price 100.0 with quantity 10.0:
 Create a sell limit order that partially matches with the existing buy order:
 
 ```bash
-./bin/orderbook-client create-order default SELL LIMIT 5.0 100.0 order2
+./bin/orderbook-client create-order default SELL LIMIT 5.0 100.0 order2 0x2222222222222222222222222222222222222222
 ```
 
 Expected output:
@@ -151,10 +151,10 @@ Check the order book state again:
 
 Expected output should show the reduced quantity:
 ```
- Price|Quantity|Orders|Side
----------------|---------------|---------------|----
----------------|---------------|---------------|----
-        100.000|          5.000|              1|BID
+          Price|       Quantity|         Orders|         Address|Side
+---------------|---------------|---------------|---------------|----
+---------------|---------------|---------------|---------------|----
+        100.000|          5.000|              1|0x1111111111111|BID
 ```
 
 #### 9. Full Order Match
@@ -162,7 +162,7 @@ Expected output should show the reduced quantity:
 Create a market sell order to complete the match:
 
 ```bash
-./bin/orderbook-client create-order default SELL MARKET 5.0 0.0 order3
+./bin/orderbook-client create-order default SELL MARKET 5.0 0.0 order3 0x3333333333333333333333333333333333333333
 ```
 
 Expected output:
@@ -181,9 +181,9 @@ Check that the order book is now empty:
 
 Expected output should show an empty order book:
 ```
- Price|Quantity|Orders|Side
----------------|---------------|---------------|----
----------------|---------------|---------------|----
+          Price|       Quantity|         Orders|         Address|Side
+---------------|---------------|---------------|---------------|----
+---------------|---------------|---------------|---------------|----
 ```
 
 ## Advanced Order Types
@@ -195,7 +195,7 @@ Expected output should show an empty order book:
 Create a stop limit order that will trigger when the market price reaches a specific level:
 
 ```bash
-./bin/orderbook-client create-order default BUY STOP_LIMIT 5.0 95.0 order4 --stop-price=90.0
+./bin/orderbook-client create-order default BUY STOP_LIMIT 5.0 95.0 order4 0x4444444444444444444444444444444444444444 --stop-price=90.0
 ```
 
 #### 2. Trigger the Stop Order
@@ -203,7 +203,7 @@ Create a stop limit order that will trigger when the market price reaches a spec
 Create a sell order at the trigger price:
 
 ```bash
-./bin/orderbook-client create-order default SELL LIMIT 1.0 90.0 order5
+./bin/orderbook-client create-order default SELL LIMIT 1.0 90.0 order5 0x5555555555555555555555555555555555555555
 ```
 
 The stop order should be activated and converted to a limit order.
@@ -215,7 +215,7 @@ The stop order should be activated and converted to a limit order.
 Create a limit order on the buy side:
 
 ```bash
-./bin/orderbook-client create-order default BUY LIMIT 10.0 100.0 order6
+./bin/orderbook-client create-order default BUY LIMIT 10.0 100.0 order6 0x6666666666666666666666666666666666666666
 ```
 
 #### 2. Test FOK Behavior
@@ -223,7 +223,7 @@ Create a limit order on the buy side:
 Create a FOK order that should be fully matched or canceled:
 
 ```bash
-./bin/orderbook-client create-order default SELL LIMIT 15.0 100.0 order7 --time-in-force=FOK
+./bin/orderbook-client create-order default SELL LIMIT 15.0 100.0 order7 0x7777777777777777777777777777777777777777 --time-in-force=FOK
 ```
 
 This order should be canceled as there's only 10.0 quantity available.
@@ -320,8 +320,8 @@ Create an order that matches with one of the market maker's orders:
 # Find a price level from the current order book state
 ./bin/orderbook-client get-state market-maker-test
 
-# Create a matching order at one of the ask prices
-./bin/orderbook-client create-order market-maker-test BUY LIMIT 1.0 10020.0 test-order1
+# Create a matching order at one of the ask prices (replace <price> and <address>)
+./bin/orderbook-client create-order market-maker-test BUY LIMIT 1.0 <price> test-order1 0x8888888888888888888888888888888888888888
 ```
 
 Observe that the market maker will replace the filled order on the next update cycle.
@@ -584,7 +584,7 @@ sudo journalctl -u marketmaker.service -f
 Create orders that match with market maker orders:
 
 ```bash
-/opt/matchingo/bin/orderbook-client create-order BTC-USD BUY LIMIT 0.01 <price> order-test-1
+/opt/matchingo/bin/orderbook-client create-order BTC-USD BUY LIMIT 0.01 <price> order-test-1 0x9999999999999999999999999999999999999999
 ```
 
 Replace `<price>` with one of the ask prices from the order book state.
@@ -601,6 +601,7 @@ Replace `<price>` with one of the ask prices from the order book state.
 - **Price API errors**: If the market maker cannot fetch prices, check your internet connection and the `PRICE_SOURCE_URL` configuration.
 - **Order placement failures**: Verify the server is running and the gRPC address is correct.
 - **No orders appearing**: Check the market maker logs for errors and verify the correct order book name is being used.
+- **User Address Required**: The `create-order` command now requires a user address as the last argument.
 
 ### Production Deployment Issues
 
