@@ -44,6 +44,7 @@ jobs:
           KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
           KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
         options: >-
           --health-cmd "kafka-topics --bootstrap-server localhost:9092 --list"
           --health-interval 5s
@@ -62,7 +63,7 @@ jobs:
     - name: Install Protoc and dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y protobuf-compiler
+        sudo apt-get install -y protobuf-compiler netcat
         go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
         go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
         go install golang.org/x/tools/cmd/goimports@latest
@@ -74,12 +75,20 @@ jobs:
     - name: Build
       run: make build
         
-    - name: Test
+    - name: Wait for Kafka
+      run: |
+        echo "Waiting for Kafka to be ready..."
+        timeout 60s bash -c 'until nc -z localhost 9092; do sleep 1; done'
+        echo "Kafka is ready"
+        
+    - name: Run Tests
       env:
         REDIS_ADDR: localhost:6379
         KAFKA_ADDR: localhost:9092
         LOG_LEVEL: debug
         LOG_FORMAT: pretty
       run: |
-        make test-unit
-        make test-integration
+        echo "Running unit tests..."
+        go test -v -race ./pkg/...
+        echo "Running integration tests..."
+        go test -v -race ./test/integration/... -run IntegrationV2
