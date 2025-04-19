@@ -29,9 +29,12 @@ var (
 
 // Config holds the OpenTelemetry configuration
 type Config struct {
-	ServiceName    string
-	ServiceVersion string
-	Endpoint       string
+	ServiceName      string
+	ServiceVersion   string
+	Endpoint         string
+	ConnectTimeout   time.Duration
+	ReconnectDelay   time.Duration
+	CollectorEnabled bool
 }
 
 // Init initializes OpenTelemetry with the given configuration
@@ -45,36 +48,61 @@ func Init(cfg Config) (func(), error) {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "localhost:4317"
 	}
+	if cfg.ConnectTimeout == 0 {
+		cfg.ConnectTimeout = 5 * time.Second
+	}
+	if cfg.ReconnectDelay == 0 {
+		cfg.ReconnectDelay = 10 * time.Second
+	}
 
 	// Initialize resource
 	resource = initResource(cfg.ServiceName, cfg.ServiceVersion)
 
+	var cleanup []func()
+
 	// Initialize tracer provider
-	tp, err := initTracerProvider(cfg.Endpoint)
-	if err != nil {
-		return nil, err
+	if cfg.CollectorEnabled {
+		tp, err := initTracerProvider(cfg)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize tracer provider: %v. Continuing without tracing.", err)
+		} else {
+			tracerProvider = tp
+			cleanup = append(cleanup, func() {
+				ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
+				defer cancel()
+				if err := tp.Shutdown(ctx); err != nil {
+					log.Printf("Error shutting down tracer provider: %v", err)
+				}
+			})
+		}
 	}
-	tracerProvider = tp
 
 	// Initialize meter provider
-	mp, err := initMeterProvider(cfg.Endpoint)
-	if err != nil {
-		return nil, err
+	if cfg.CollectorEnabled {
+		mp, err := initMeterProvider(cfg)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize meter provider: %v. Continuing without metrics.", err)
+		} else {
+			meterProvider = mp
+			cleanup = append(cleanup, func() {
+				ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
+				defer cancel()
+				if err := mp.Shutdown(ctx); err != nil {
+					log.Printf("Error shutting down meter provider: %v", err)
+				}
+			})
+		}
 	}
-	meterProvider = mp
 
 	// Create a tracer for this service
-	tracer = tp.Tracer(cfg.ServiceName)
+	if tracerProvider != nil {
+		tracer = tracerProvider.Tracer(cfg.ServiceName)
+	}
 
-	// Return cleanup function
+	// Return cleanup function that executes all cleanup functions
 	return func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := tp.Shutdown(ctx); err != nil {
-			log.Printf("Error shutting down tracer provider: %v", err)
-		}
-		if err := mp.Shutdown(ctx); err != nil {
-			log.Printf("Error shutting down meter provider: %v", err)
+		for _, fn := range cleanup {
+			fn()
 		}
 	}, nil
 }
@@ -100,14 +128,13 @@ func initResource(serviceName, serviceVersion string) *sdkresource.Resource {
 	return resource
 }
 
-func initTracerProvider(endpoint string) (*sdktrace.TracerProvider, error) {
+func initTracerProvider(cfg Config) (*sdktrace.TracerProvider, error) {
 	ctx := context.Background()
 
 	// Create gRPC connection to collector
-	conn, err := grpc.DialContext(ctx, endpoint,
+	conn, err := grpc.DialContext(ctx, cfg.Endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-		grpc.WithTimeout(5*time.Second),
+		grpc.WithTimeout(cfg.ConnectTimeout),
 	)
 	if err != nil {
 		return nil, err
@@ -134,14 +161,13 @@ func initTracerProvider(endpoint string) (*sdktrace.TracerProvider, error) {
 	return tp, nil
 }
 
-func initMeterProvider(endpoint string) (*sdkmetric.MeterProvider, error) {
+func initMeterProvider(cfg Config) (*sdkmetric.MeterProvider, error) {
 	ctx := context.Background()
 
 	// Create gRPC connection to collector
-	conn, err := grpc.DialContext(ctx, endpoint,
+	conn, err := grpc.DialContext(ctx, cfg.Endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-		grpc.WithTimeout(5*time.Second),
+		grpc.WithTimeout(cfg.ConnectTimeout),
 	)
 	if err != nil {
 		return nil, err
