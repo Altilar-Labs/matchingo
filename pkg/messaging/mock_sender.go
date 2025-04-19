@@ -1,24 +1,58 @@
 package messaging
 
-// MockMessageSender is a no-op implementation of MessageSender for testing.
-type MockMessageSender struct{}
+import (
+	"sync"
+)
 
-// NewMockMessageSender creates a new MockMessageSender.
+// MockMessageSender implements the MessageSender interface for testing purposes.
+// It captures sent messages instead of sending them to a real queue.
+type MockMessageSender struct {
+	mu           sync.Mutex
+	SentMessages []*DoneMessage
+	SendError    error // Optional error to return on SendDoneMessage
+}
+
+// NewMockMessageSender creates a new mock sender.
 func NewMockMessageSender() *MockMessageSender {
-	return &MockMessageSender{}
+	return &MockMessageSender{
+		SentMessages: make([]*DoneMessage, 0),
+	}
 }
 
-// SendDoneMessage does nothing.
+// SendDoneMessage captures the message and returns an optional pre-configured error.
 func (m *MockMessageSender) SendDoneMessage(done *DoneMessage) error {
-	// No-op
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.SendError != nil {
+		return m.SendError
+	}
+
+	m.SentMessages = append(m.SentMessages, done)
 	return nil
 }
 
-// Close does nothing.
-func (m *MockMessageSender) Close() error {
-	// No-op
-	return nil
+// GetSentMessages returns a copy of the captured messages.
+func (m *MockMessageSender) GetSentMessages() []*DoneMessage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Return a copy to prevent race conditions if the caller modifies the slice
+	msgsCopy := make([]*DoneMessage, len(m.SentMessages))
+	copy(msgsCopy, m.SentMessages)
+	return msgsCopy
 }
 
-// Ensure MockMessageSender implements MessageSender
-var _ MessageSender = (*MockMessageSender)(nil)
+// ClearSentMessages removes all captured messages.
+func (m *MockMessageSender) ClearSentMessages() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SentMessages = make([]*DoneMessage, 0)
+}
+
+// SetSendError allows configuring an error to be returned by SendDoneMessage.
+func (m *MockMessageSender) SetSendError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SendError = err
+}
