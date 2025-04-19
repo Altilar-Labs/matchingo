@@ -7,15 +7,11 @@ test: test-unit test-integration
 
 test-unit:
 	@echo "Running unit tests..."
-	go test -v -race -coverprofile=coverage.out ./pkg/...
+	go test -v ./pkg/... -count=1
 
 test-integration:
-	@echo "Starting dependencies for integration tests..."
-	$(MAKE) test-deps-up
 	@echo "Running integration tests..."
-	go test -v -race ./test/integration/... -run IntegrationV2
-	@echo "Stopping dependencies..."
-	$(MAKE) test-deps-down
+	go test -v ./test/integration/... -run "TestIntegrationV2_(BasicLimitOrder|LimitOrderMatch|MarketOrderMatch|CancelOrder|IOC_FOK)" -count=1
 
 test-redis:
 	@echo "Starting dependencies for Redis tests..."

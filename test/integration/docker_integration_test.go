@@ -7,6 +7,7 @@ import (
 
 	"github.com/erain9/matchingo/pkg/api/proto"
 	testutil "github.com/erain9/matchingo/test/utils"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,16 @@ import (
 // TestDockerIntegration_FullFlow verifies a complete flow using Docker-provided Redis and Kafka
 func TestDockerIntegration_FullFlow(t *testing.T) {
 	testutil.RunIntegrationTest(t, func(redisAddr, kafkaAddr string) {
+		// Create a Redis client to clean up any existing state
+		redisClient := redis.NewClient(&redis.Options{
+			Addr: redisAddr,
+		})
+		defer redisClient.Close()
+
+		// Clean up any existing state
+		err := redisClient.FlushAll(context.Background()).Err()
+		require.NoError(t, err, "Failed to clean Redis state")
+
 		// Create a real integration test setup with the Docker-provided services
 		ctx := context.Background()
 
