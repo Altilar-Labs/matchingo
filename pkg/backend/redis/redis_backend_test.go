@@ -10,7 +10,18 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
+
+var testLogger *zap.Logger
+
+func init() {
+	var err error
+	testLogger, err = zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+}
 
 // setupTestRedis initializes a Redis client for testing.
 // It assumes Redis is running on localhost:6379.
@@ -34,11 +45,11 @@ func setupTestRedis(t *testing.T) *redis.Client {
 func TestNewRedisBackend(t *testing.T) {
 	client := setupTestRedis(t)
 	prefix := "test:newredis:"
-	backend := NewRedisBackend(client, prefix)
+	backend := NewRedisBackend(client, prefix, testLogger)
 
 	assert.NotNil(t, backend)
 	assert.Equal(t, client, backend.client)
-	assert.Equal(t, fmt.Sprintf("%s:order", prefix), backend.orderKey)
+	assert.Equal(t, prefix, backend.orderPrefix)
 	assert.Equal(t, fmt.Sprintf("%s:bids", prefix), backend.bidsKey)
 	assert.Equal(t, fmt.Sprintf("%s:asks", prefix), backend.asksKey)
 	assert.Equal(t, fmt.Sprintf("%s:stop:buy", prefix), backend.stopBuyKey)
@@ -48,7 +59,7 @@ func TestNewRedisBackend(t *testing.T) {
 
 func TestRedisBackend_StoreGetUpdateDeleteOrder(t *testing.T) {
 	client := setupTestRedis(t)
-	backend := NewRedisBackend(client, "test:orders:")
+	backend := NewRedisBackend(client, "test:orders:", testLogger)
 
 	// Create test order
 	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "", "test_user")
@@ -81,7 +92,7 @@ func TestRedisBackend_StoreGetUpdateDeleteOrder(t *testing.T) {
 
 func TestRedisBackend_AppendAndRemoveFromSide(t *testing.T) {
 	client := setupTestRedis(t)
-	backend := NewRedisBackend(client, "test:sides:")
+	backend := NewRedisBackend(client, "test:sides:", testLogger)
 
 	// Create test order
 	order, err := core.NewLimitOrder("test1", core.Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(100.0), core.GTC, "", "test_user")
@@ -108,7 +119,7 @@ func TestRedisBackend_AppendAndRemoveFromSide(t *testing.T) {
 
 func TestRedisBackend_AppendToSide_MultipleOrdersSamePrice(t *testing.T) {
 	client := setupTestRedis(t)
-	backend := NewRedisBackend(client, "test:multisameprice:")
+	backend := NewRedisBackend(client, "test:multisameprice:", testLogger)
 	price := fpdecimal.FromFloat(100.0)
 	qty := fpdecimal.FromFloat(1.0)
 
@@ -167,7 +178,7 @@ func TestRedisBackend_AppendToSide_MultipleOrdersSamePrice(t *testing.T) {
 
 func TestRedisBackend_GetComponents(t *testing.T) {
 	client := setupTestRedis(t)
-	backend := NewRedisBackend(client, "test")
+	backend := NewRedisBackend(client, "test", testLogger)
 
 	bids := backend.GetBids()
 	if bids == nil {
@@ -187,7 +198,7 @@ func TestRedisBackend_GetComponents(t *testing.T) {
 
 func TestRedisBackend_BasicOperations(t *testing.T) {
 	client := setupTestRedis(t)
-	backend := NewRedisBackend(client, "test")
+	backend := NewRedisBackend(client, "test", testLogger)
 
 	// Test storing and retrieving an order
 	orderID := "test-123"
@@ -232,7 +243,7 @@ func TestRedisBackend_StopBookInterface(t *testing.T) {
 	client := setupTestRedis(t)
 	defer client.Close()
 
-	backend := NewRedisBackend(client, "test:testrstopbook")
+	backend := NewRedisBackend(client, "test:testrstopbook", testLogger)
 
 	// 1. Create some stop orders
 	buyStopOrder1, err := core.NewStopLimitOrder("stop-buy-1", core.Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(100.0), fpdecimal.FromFloat(105.0), "", "test_user")
