@@ -68,14 +68,19 @@ func main() {
 
 	// Initialize OpenTelemetry
 	cleanup, err := otel.Init(otel.Config{
-		ServiceName:    "matchingo",
-		ServiceVersion: "1.0.0",
-		Endpoint:       "localhost:4317", // Change this to your collector endpoint
+		ServiceName:      "matchingo",
+		ServiceVersion:   "1.0.0",
+		Endpoint:         "localhost:4317", // Change this to your collector endpoint
+		ConnectTimeout:   5 * time.Second,
+		ReconnectDelay:   10 * time.Second,
+		CollectorEnabled: true, // Can be disabled via configuration
 	})
 	if err != nil {
-		log.Fatalf("Failed to initialize OpenTelemetry: %v", err)
+		log.Printf("Warning: OpenTelemetry initialization failed: %v. Continuing without telemetry.", err)
+	} else {
+		defer cleanup()
 	}
-	defer cleanup()
+
 	// Setup gRPC server
 	grpcServer, err := setupGRPCServer(ctx, cfg, manager)
 	if err != nil {
@@ -120,9 +125,27 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
-	// Create gRPC server with the order book service
+	// Create metrics interceptors
+	metricsUnaryInterceptor, err := otel.MetricsServerInterceptor()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metrics interceptor: %w", err)
+	}
+
+	metricsStreamInterceptor, err := otel.MetricsStreamServerInterceptor()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metrics stream interceptor: %w", err)
+	}
+
+	// Create gRPC server with the order book service and interceptors
 	grpcServer := grpc.NewServer(
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			otelgrpc.UnaryServerInterceptor(), // Tracing interceptor
+			metricsUnaryInterceptor,           // Metrics interceptor
+		),
+		grpc.ChainStreamInterceptor(
+			otelgrpc.StreamServerInterceptor(), // Tracing interceptor
+			metricsStreamInterceptor,           // Metrics interceptor
+		),
 	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)
