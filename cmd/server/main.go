@@ -15,8 +15,10 @@ import (
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/erain9/matchingo/pkg/db/queue"
 	"github.com/erain9/matchingo/pkg/messaging/kafka"
+	"github.com/erain9/matchingo/pkg/otel"
 	"github.com/erain9/matchingo/pkg/server"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -64,6 +66,16 @@ func main() {
 		defer kafkaConsumer.Close()
 	}
 
+	// Initialize OpenTelemetry
+	cleanup, err := otel.Init(otel.Config{
+		ServiceName:    "matchingo",
+		ServiceVersion: "1.0.0",
+		Endpoint:       "localhost:4317", // Change this to your collector endpoint
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize OpenTelemetry: %v", err)
+	}
+	defer cleanup()
 	// Setup gRPC server
 	grpcServer, err := setupGRPCServer(ctx, cfg, manager)
 	if err != nil {
@@ -109,7 +121,9 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 	}
 
 	// Create gRPC server with the order book service
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)
 
@@ -123,7 +137,6 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 			logger.Fatal().Err(err).Msg("Failed to serve gRPC")
 		}
 	}()
-
 	return grpcServer, nil
 }
 
