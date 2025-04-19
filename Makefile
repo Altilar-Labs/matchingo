@@ -70,6 +70,7 @@ proto:
 
 build:
 	@echo "Building server and client..."
+	@go mod tidy
 	@mkdir -p bin
 	@go build -o bin/orderbook-server cmd/server/main.go
 	@go build -o bin/orderbook-client cmd/client/main.go

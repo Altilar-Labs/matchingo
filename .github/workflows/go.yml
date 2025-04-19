@@ -43,6 +43,9 @@ jobs:
         
     - name: Generate Protobuf
       run: make proto
+
+    - name: Update dependencies
+      run: go mod tidy
         
     - name: Build
       run: make build
