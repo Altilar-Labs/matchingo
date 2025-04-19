@@ -11,6 +11,7 @@ import (
 	"github.com/erain9/matchingo/pkg/core"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // RedisOptions represents configuration options for Redis connection
@@ -45,38 +46,51 @@ type RedisBackend struct {
 	sync.RWMutex
 	client      *redis.Client
 	ctx         context.Context
-	orderKey    string
+	orderPrefix string
 	bidsKey     string
 	asksKey     string
 	stopBuyKey  string
 	stopSellKey string
 	ocoKey      string
+	logger      *zap.Logger
 }
 
 // NewRedisBackend creates a new instance of RedisBackend
-func NewRedisBackend(client *redis.Client, orderPrefix string) *RedisBackend {
+func NewRedisBackend(client *redis.Client, orderPrefix string, logger *zap.Logger) *RedisBackend {
 	return &RedisBackend{
 		client:      client,
 		ctx:         context.Background(),
-		orderKey:    fmt.Sprintf("%s:order", orderPrefix),
+		orderPrefix: orderPrefix,
 		bidsKey:     fmt.Sprintf("%s:bids", orderPrefix),
 		asksKey:     fmt.Sprintf("%s:asks", orderPrefix),
 		stopBuyKey:  fmt.Sprintf("%s:stop:buy", orderPrefix),
 		stopSellKey: fmt.Sprintf("%s:stop:sell", orderPrefix),
 		ocoKey:      fmt.Sprintf("%s:oco", orderPrefix),
+		logger:      logger,
 	}
 }
 
-// GetOrder retrieves an order by ID from Redis
+// GetOrder retrieves an order from Redis by its ID
 func (b *RedisBackend) GetOrder(orderID string) *core.Order {
-	key := fmt.Sprintf("%s:%s", b.orderKey, orderID)
-	val, err := b.client.Get(b.ctx, key).Result()
+	b.RLock()
+	defer b.RUnlock()
+
+	key := b.getOrderKey(orderID)
+	data, err := b.client.Get(b.ctx, key).Bytes()
 	if err != nil {
+		if err != redis.Nil {
+			b.logger.Error("failed to get order",
+				zap.String("orderID", orderID),
+				zap.Error(err))
+		}
 		return nil
 	}
 
 	var order core.Order
-	if err := json.Unmarshal([]byte(val), &order); err != nil {
+	if err := json.Unmarshal(data, &order); err != nil {
+		b.logger.Error("failed to unmarshal order",
+			zap.String("orderID", orderID),
+			zap.Error(err))
 		return nil
 	}
 
@@ -86,7 +100,7 @@ func (b *RedisBackend) GetOrder(orderID string) *core.Order {
 // StoreOrder stores an order in Redis
 func (b *RedisBackend) StoreOrder(order *core.Order) error {
 	// Check if order exists
-	key := fmt.Sprintf("%s:%s", b.orderKey, order.ID())
+	key := b.getOrderKey(order.ID())
 	exists, err := b.client.Exists(b.ctx, key).Result()
 	if err != nil {
 		return err
@@ -124,7 +138,7 @@ func (b *RedisBackend) StoreOrder(order *core.Order) error {
 // UpdateOrder updates an existing order in Redis
 func (b *RedisBackend) UpdateOrder(order *core.Order) error {
 	// Check if order exists
-	key := fmt.Sprintf("%s:%s", b.orderKey, order.ID())
+	key := b.getOrderKey(order.ID())
 	exists, err := b.client.Exists(b.ctx, key).Result()
 	if err != nil {
 		return err
@@ -160,154 +174,163 @@ func (b *RedisBackend) DeleteOrder(orderID string) {
 	}
 
 	// Delete order
-	key := fmt.Sprintf("%s:%s", b.orderKey, orderID)
+	key := b.getOrderKey(orderID)
 	b.client.Del(b.ctx, key)
 }
 
-// AppendToSide adds an order to the specified side in Redis
+// AppendToSide adds an order to the specified side of the order book
 func (b *RedisBackend) AppendToSide(side core.Side, order *core.Order) {
-	if order.IsMarketOrder() {
-		return
-	}
+	b.Lock()
+	defer b.Unlock()
 
-	var sideKey string
-	if side == core.Buy {
-		sideKey = b.bidsKey
-	} else {
-		sideKey = b.asksKey
-	}
-
-	// Store order price -> ID mapping
+	pipe := b.client.Pipeline()
+	sideKey := b.getSideKey(side)
 	priceKey := fmt.Sprintf("%s:%s", sideKey, order.Price().String())
-	b.client.SAdd(b.ctx, priceKey, order.ID())
 
-	// Store price in the sorted set
-	var score float64
-	if side == core.Buy {
-		// For buy orders, higher prices should be processed first
-		score = -parseFloat(order.Price())
-	} else {
-		// For sell orders, lower prices should be processed first
-		score = parseFloat(order.Price())
-	}
-
-	b.client.ZAdd(b.ctx, sideKey, redis.Z{
-		Score:  score,
+	// Add to sorted set with score as price
+	pipe.ZAdd(b.ctx, sideKey, redis.Z{
+		Score:  order.Price().Float64(),
 		Member: order.Price().String(),
 	})
-}
 
-// RemoveFromSide removes an order from the specified side in Redis
-func (b *RedisBackend) RemoveFromSide(side core.Side, order *core.Order) bool {
-	if order.IsMarketOrder() {
-		return false
-	}
+	// Add order ID to the set at this price level
+	pipe.SAdd(b.ctx, priceKey, order.ID())
 
-	var sideKey string
-	if side == core.Buy {
-		sideKey = b.bidsKey
-	} else {
-		sideKey = b.asksKey
-	}
-
-	priceKey := fmt.Sprintf("%s:%s", sideKey, order.Price().String())
-	removed, err := b.client.SRem(b.ctx, priceKey, order.ID()).Result()
-	if err != nil || removed == 0 {
-		return false
-	}
-
-	// Check if there are other orders at this price
-	count, err := b.client.SCard(b.ctx, priceKey).Result()
-	if err != nil || count > 0 {
-		return true
-	}
-
-	// If no more orders at this price, remove the price from the sorted set
-	b.client.ZRem(b.ctx, sideKey, order.Price().String())
-	b.client.Del(b.ctx, priceKey)
-
-	return true
-}
-
-// AppendToStopBook adds a stop order to the stop book in Redis
-func (b *RedisBackend) AppendToStopBook(order *core.Order) {
-	if !order.IsStopOrder() {
+	// Execute pipeline
+	if _, err := pipe.Exec(b.ctx); err != nil {
+		b.logger.Error("failed to execute pipeline",
+			zap.String("order_id", order.ID()),
+			zap.Error(err))
 		return
 	}
-
-	var stopKey string
-	if order.Side() == core.Buy {
-		stopKey = b.stopBuyKey
-	} else {
-		stopKey = b.stopSellKey
-	}
-
-	// Store order stop price -> ID mapping
-	priceKey := fmt.Sprintf("%s:%s", stopKey, order.StopPrice().String())
-	b.client.SAdd(b.ctx, priceKey, order.ID())
-
-	// Store price in the sorted set
-	var score float64
-	if order.Side() == core.Buy {
-		// For buy stop orders, lower prices should be processed first
-		score = parseFloat(order.StopPrice())
-	} else {
-		// For sell stop orders, higher prices should be processed first
-		score = -parseFloat(order.StopPrice())
-	}
-
-	b.client.ZAdd(b.ctx, stopKey, redis.Z{
-		Score:  score,
-		Member: order.StopPrice().String(),
-	})
 }
 
-// RemoveFromStopBook removes a stop order from the stop book in Redis
-func (b *RedisBackend) RemoveFromStopBook(order *core.Order) bool {
-	if !order.IsStopOrder() {
+// RemoveFromSide removes an order from the specified side of the order book
+func (b *RedisBackend) RemoveFromSide(side core.Side, order *core.Order) bool {
+	b.Lock()
+	defer b.Unlock()
+
+	pipe := b.client.Pipeline()
+	sideKey := b.getSideKey(side)
+	priceKey := fmt.Sprintf("%s:%s", sideKey, order.Price().String())
+
+	// Remove order from price level set
+	pipe.SRem(b.ctx, priceKey, order.ID())
+
+	// Check if price level is empty after removal
+	pipe.SCard(b.ctx, priceKey).Result()
+
+	// Execute pipeline
+	cmders, err := pipe.Exec(b.ctx)
+	if err != nil {
+		b.logger.Error("failed to execute pipeline",
+			zap.String("orderID", order.ID()),
+			zap.String("side", side.String()),
+			zap.Error(err))
 		return false
 	}
 
-	var stopKey string
-	if order.Side() == core.Buy {
-		stopKey = b.stopBuyKey
-	} else {
-		stopKey = b.stopSellKey
+	// If price level is empty, remove it from sorted set and delete the set
+	if cmders[1].(*redis.IntCmd).Val() == 0 {
+		pipe.ZRem(b.ctx, sideKey, order.Price().String())
+		pipe.Del(b.ctx, priceKey)
+		if _, err := pipe.Exec(b.ctx); err != nil {
+			b.logger.Error("failed to clean up empty price level",
+				zap.String("orderID", order.ID()),
+				zap.Error(err))
+		}
 	}
-
-	priceKey := fmt.Sprintf("%s:%s", stopKey, order.StopPrice().String())
-	removed, err := b.client.SRem(b.ctx, priceKey, order.ID()).Result()
-	if err != nil || removed == 0 {
-		return false
-	}
-
-	// Check if there are other orders at this price
-	count, err := b.client.SCard(b.ctx, priceKey).Result()
-	if err != nil || count > 0 {
-		return true
-	}
-
-	// If no more orders at this price, remove the price from the sorted set
-	b.client.ZRem(b.ctx, stopKey, order.StopPrice().String())
-	b.client.Del(b.ctx, priceKey)
 
 	return true
 }
 
-// CheckOCO checks and cancels any OCO (One Cancels Other) orders in Redis
-func (b *RedisBackend) CheckOCO(orderID string) string {
-	ocoID, err := b.client.HGet(b.ctx, b.ocoKey, orderID).Result()
+// AppendToStopBook adds a stop order to the stop book
+func (b *RedisBackend) AppendToStopBook(order *core.Order) {
+	b.Lock()
+	defer b.Unlock()
+
+	// Determine which stop book to use
+	var stopKey string
+	if order.Side() == core.Buy {
+		stopKey = b.stopBuyKey
+	} else {
+		stopKey = b.stopSellKey
+	}
+
+	pipe := b.client.Pipeline()
+	priceKey := fmt.Sprintf("%s:%s", stopKey, order.StopPrice().String())
+
+	// Add to sorted set with score as stop price
+	pipe.ZAdd(b.ctx, stopKey, redis.Z{
+		Score:  order.StopPrice().Float64(),
+		Member: order.StopPrice().String(),
+	})
+
+	// Add order ID to the set at this price level
+	pipe.SAdd(b.ctx, priceKey, order.ID())
+
+	// Execute pipeline
+	if _, err := pipe.Exec(b.ctx); err != nil {
+		b.logger.Error("failed to execute pipeline",
+			zap.String("order_id", order.ID()),
+			zap.Error(err))
+	}
+}
+
+// RemoveFromStopBook removes a stop order from the stop book
+func (b *RedisBackend) RemoveFromStopBook(order *core.Order) bool {
+	b.Lock()
+	defer b.Unlock()
+
+	// Determine which stop book to use
+	var stopKey string
+	if order.Side() == core.Buy {
+		stopKey = b.stopBuyKey
+	} else {
+		stopKey = b.stopSellKey
+	}
+
+	pipe := b.client.Pipeline()
+	priceKey := fmt.Sprintf("%s:%s", stopKey, order.StopPrice().String())
+
+	// Remove order from price level set
+	pipe.SRem(b.ctx, priceKey, order.ID())
+
+	// Check if price level is empty after removal
+	pipe.SCard(b.ctx, priceKey).Result()
+
+	// Execute pipeline
+	cmders, err := pipe.Exec(b.ctx)
 	if err != nil {
+		b.logger.Error("failed to execute pipeline",
+			zap.String("orderID", order.ID()),
+			zap.Error(err))
+		return false
+	}
+
+	// If price level is empty, remove it from sorted set and delete the set
+	if cmders[1].(*redis.IntCmd).Val() == 0 {
+		pipe.ZRem(b.ctx, stopKey, order.StopPrice().String())
+		pipe.Del(b.ctx, priceKey)
+		if _, err := pipe.Exec(b.ctx); err != nil {
+			b.logger.Error("failed to clean up empty price level",
+				zap.String("orderID", order.ID()),
+				zap.Error(err))
+		}
+	}
+
+	return true
+}
+
+// CheckOCO checks and returns any OCO (One Cancels Other) orders in Redis
+func (b *RedisBackend) CheckOCO(orderID string) string {
+	order := b.GetOrder(orderID)
+	if order == nil {
 		return ""
 	}
 
-	// Clean up mappings
-	pipe := b.client.Pipeline()
-	pipe.HDel(b.ctx, b.ocoKey, orderID)
-	pipe.HDel(b.ctx, b.ocoKey, ocoID)
-	pipe.Exec(b.ctx)
-
-	return ocoID
+	// Return the OCO order ID
+	return order.OCO()
 }
 
 // GetBids returns the bid side of the order book for iteration
@@ -369,7 +392,7 @@ func (rs *RedisSide) String() string {
 	// Process each member
 	for _, orderID := range members {
 		orderData, err := rs.backend.client.Get(rs.backend.ctx,
-			rs.backend.orderKey+":"+orderID).Result()
+			rs.backend.getOrderKey(orderID)).Result()
 		if err != nil {
 			continue
 		}
@@ -458,7 +481,7 @@ func (rsb *RedisStopBook) String() string {
 	if err == nil {
 		for _, orderID := range buyMembers {
 			orderData, err := rsb.backend.client.Get(rsb.backend.ctx,
-				rsb.backend.orderKey+":"+orderID).Result()
+				rsb.backend.getOrderKey(orderID)).Result()
 			if err != nil {
 				continue
 			}
@@ -483,7 +506,7 @@ func (rsb *RedisStopBook) String() string {
 	if err == nil {
 		for _, orderID := range sellMembers {
 			orderData, err := rsb.backend.client.Get(rsb.backend.ctx,
-				rsb.backend.orderKey+":"+orderID).Result()
+				rsb.backend.getOrderKey(orderID)).Result()
 			if err != nil {
 				continue
 			}
@@ -587,25 +610,15 @@ func (rsb *RedisStopBook) BuyOrders() []*core.Order {
 	var allOrders []*core.Order
 
 	// Get all buy stop price levels
-	buyPrices := make([]fpdecimal.Decimal, 0)
-	buyMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopBuyKey, 0, -1).Result()
+	members, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopBuyKey, 0, -1).Result()
 	if err != nil {
 		return allOrders
 	}
 
-	// Convert price strings to fpdecimal values
-	for _, priceStr := range buyMembers {
-		f, err := strconv.ParseFloat(priceStr, 64)
-		if err != nil {
-			continue
-		}
-		buyPrices = append(buyPrices, fpdecimal.FromFloat(f))
-	}
-
-	// Get all orders for each price level
-	for _, price := range buyPrices {
-		buyPriceKey := fmt.Sprintf("%s:%s", rsb.stopBuyKey, price.String())
-		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, buyPriceKey).Result()
+	// Get orders at each price level
+	for _, priceStr := range members {
+		priceKey := fmt.Sprintf("%s:%s", rsb.stopBuyKey, priceStr)
+		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, priceKey).Result()
 		if err != nil {
 			continue
 		}
@@ -626,25 +639,15 @@ func (rsb *RedisStopBook) SellOrders() []*core.Order {
 	var allOrders []*core.Order
 
 	// Get all sell stop price levels
-	sellPrices := make([]fpdecimal.Decimal, 0)
-	sellMembers, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopSellKey, 0, -1).Result()
+	members, err := rsb.backend.client.ZRange(rsb.backend.ctx, rsb.stopSellKey, 0, -1).Result()
 	if err != nil {
 		return allOrders
 	}
 
-	// Convert price strings to fpdecimal values
-	for _, priceStr := range sellMembers {
-		f, err := strconv.ParseFloat(priceStr, 64)
-		if err != nil {
-			continue
-		}
-		sellPrices = append(sellPrices, fpdecimal.FromFloat(f))
-	}
-
-	// Get all orders for each price level
-	for _, price := range sellPrices {
-		sellPriceKey := fmt.Sprintf("%s:%s", rsb.stopSellKey, price.String())
-		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, sellPriceKey).Result()
+	// Get orders at each price level
+	for _, priceStr := range members {
+		priceKey := fmt.Sprintf("%s:%s", rsb.stopSellKey, priceStr)
+		orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, priceKey).Result()
 		if err != nil {
 			continue
 		}
@@ -665,4 +668,78 @@ func parseFloat(d fpdecimal.Decimal) float64 {
 	str := d.String()
 	f, _ := strconv.ParseFloat(str, 64)
 	return f
+}
+
+// Helper methods for key generation
+func (b *RedisBackend) getSideKey(side core.Side) string {
+	if side == core.Buy {
+		return b.bidsKey
+	}
+	return b.asksKey
+}
+
+func (b *RedisBackend) getOrderKey(orderID string) string {
+	return fmt.Sprintf("order:%s", orderID)
+}
+
+// Close closes the Redis client and cleans up resources
+func (b *RedisBackend) Close() error {
+	b.Lock()
+	defer b.Unlock()
+	return b.client.Close()
+}
+
+// WithContext returns a new RedisBackend with the given context
+func (b *RedisBackend) WithContext(ctx context.Context) *RedisBackend {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	clone := *b
+	clone.ctx = ctx
+	return &clone
+}
+
+func (rsb *RedisStopBook) RemoveStopOrder(symbol string, orderID string) error {
+	order := rsb.backend.GetOrder(orderID)
+	if order == nil {
+		return fmt.Errorf("order not found: %s", orderID)
+	}
+	// ... existing code ...
+	return nil
+}
+
+func (rsb *RedisStopBook) TriggerStopOrder(symbol string, orderID string) error {
+	order := rsb.backend.GetOrder(orderID)
+	if order == nil {
+		return fmt.Errorf("order not found: %s", orderID)
+	}
+	// ... existing code ...
+	return nil
+}
+
+func (rsb *RedisStopBook) RemoveFromStopBook(symbol string, orderID string) error {
+	order := rsb.backend.GetOrder(orderID)
+	if order == nil {
+		return fmt.Errorf("order not found: %s", orderID)
+	}
+	// ... existing code ...
+	return nil
+}
+
+func (rsb *RedisStopBook) GetStopOrders(symbol string) ([]*core.Order, error) {
+	// ... existing code ...
+	orderIDs, err := rsb.backend.client.SMembers(rsb.backend.ctx, rsb.stopBuyKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	// ... existing code ...
+	for _, orderID := range orderIDs {
+		order := rsb.backend.GetOrder(orderID)
+		if order == nil {
+			continue
+		}
+		// ... existing code ...
+	}
+	// ... existing code ...
+	return nil, nil
 }

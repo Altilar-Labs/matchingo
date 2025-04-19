@@ -12,6 +12,7 @@ import (
 	"github.com/erain9/matchingo/pkg/logging"
 	redisClient "github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+	"go.uber.org/zap"
 )
 
 var (
@@ -83,6 +84,12 @@ func (m *OrderBookManager) CreateMemoryOrderBook(ctx context.Context, name strin
 
 // CreateRedisOrderBook creates a new order book with Redis backend
 func (m *OrderBookManager) CreateRedisOrderBook(ctx context.Context, name string, options map[string]string) (*OrderBookInfo, error) {
+	// Convert zerolog logger to zap logger
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		return nil, err
+	}
+
 	logger := logging.FromContext(ctx).With().Str("order_book", name).Logger()
 
 	m.mu.Lock()
@@ -144,7 +151,7 @@ func (m *OrderBookManager) CreateRedisOrderBook(ctx context.Context, name string
 	}
 
 	// Create Redis backend
-	backend := redis.NewRedisBackend(client, prefix)
+	backend := redis.NewRedisBackend(client, prefix, zapLogger)
 
 	// Create order book
 	orderBook := core.NewOrderBook(backend)

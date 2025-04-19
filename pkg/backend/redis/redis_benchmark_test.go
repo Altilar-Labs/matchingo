@@ -62,7 +62,7 @@ func BenchmarkAppendToSide_Bids(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:bids:")
+	backend := NewRedisBackend(client, "bench:bids:", testLogger)
 	benchmarkAppendToSide(b, backend, core.Buy)
 }
 
@@ -78,7 +78,7 @@ func BenchmarkAppendToSide_Asks(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:asks:")
+	backend := NewRedisBackend(client, "bench:asks:", testLogger)
 	benchmarkAppendToSide(b, backend, core.Sell)
 }
 
@@ -111,7 +111,7 @@ func BenchmarkRemoveFromSide_Bids(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:bids:")
+	backend := NewRedisBackend(client, "bench:bids:", testLogger)
 	benchmarkRemoveFromSide(b, backend, core.Buy)
 }
 
@@ -127,7 +127,7 @@ func BenchmarkRemoveFromSide_Asks(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:asks:")
+	backend := NewRedisBackend(client, "bench:asks:", testLogger)
 	benchmarkRemoveFromSide(b, backend, core.Sell)
 }
 
@@ -143,7 +143,7 @@ func BenchmarkRedisBackend_StoreOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:store:")
+	backend := NewRedisBackend(client, "bench:store:", testLogger)
 	orders := make([]*core.Order, b.N)
 	for i := 0; i < b.N; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
@@ -172,7 +172,7 @@ func BenchmarkRedisBackend_GetOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:get:")
+	backend := NewRedisBackend(client, "bench:get:", testLogger)
 	orderIDs := make([]string, benchSize)
 	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
@@ -202,7 +202,7 @@ func BenchmarkRedisBackend_UpdateOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:update:")
+	backend := NewRedisBackend(client, "bench:update:", testLogger)
 	orders := make([]*core.Order, benchSize)
 	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
@@ -234,7 +234,7 @@ func BenchmarkRedisBackend_DeleteOrder(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:delete:")
+	backend := NewRedisBackend(client, "bench:delete:", testLogger)
 	orders := make([]*core.Order, benchSize)
 	for i := 0; i < benchSize; i++ {
 		orderID := fmt.Sprintf("order-%d", i)
@@ -264,7 +264,7 @@ func BenchmarkOrderBook_Process_Redis(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:process:")
+	backend := NewRedisBackend(client, "bench:process:", testLogger)
 	book := core.NewOrderBook(backend)
 
 	// Create sell orders to match against
@@ -301,7 +301,7 @@ func BenchmarkOrderBook_LargeOrderBook_Redis(b *testing.B) {
 	defer cancel()
 	client.FlushDB(ctx)
 
-	backend := NewRedisBackend(client, "bench:large:")
+	backend := NewRedisBackend(client, "bench:large:", testLogger)
 	book := core.NewOrderBook(backend)
 
 	// Create a large order book with many price levels
