@@ -1,13 +1,32 @@
 package core
 
 import (
+	"os"
 	"sort"
 	"testing"
 
+	"github.com/erain9/matchingo/pkg/messaging"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain sets up the mock message sender for all tests in this package
+func TestMain(m *testing.M) {
+	// Override the message sender factory with our mock for testing
+	SetMessageSenderFactory(func() messaging.MessageSender {
+		return messaging.NewMockMessageSender()
+	})
+
+	// Run all tests
+	code := m.Run()
+
+	// Reset the factory after tests (optional, good practice)
+	SetMessageSenderFactory(nil)
+
+	// Exit with the test result code
+	os.Exit(code)
+}
 
 // mockBackend implements the OrderBookBackend interface for testing with enhanced functionality
 type mockBackend struct {
