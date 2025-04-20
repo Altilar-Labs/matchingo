@@ -139,33 +139,22 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 		return nil, fmt.Errorf("failed to create metrics stream interceptor: %w", err)
 	}
 
-	// Configure OpenTelemetry interceptor options for Order Service
-	orderOtelOpts := []otelgrpc.Option{
+	// Configure OpenTelemetry interceptor options for gRPC spans
+	// All gRPC automatic spans will use the order service
+	otelOpts := []otelgrpc.Option{
 		otelgrpc.WithTracerProvider(otel.GetTracerProvider(otel.ServiceOrder)),
-		otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
-	}
-
-	// Configure OpenTelemetry interceptor options for Matching Engine
-	matchingOtelOpts := []otelgrpc.Option{
-		otelgrpc.WithTracerProvider(otel.GetTracerProvider(otel.ServiceMatchingEngine)),
 		otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
 	}
 
 	// Create gRPC server with the order book service and interceptors
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
-			// Use Order Service interceptor for order-related operations
-			otelgrpc.UnaryServerInterceptor(orderOtelOpts...),
-			// Use Matching Engine interceptor for matching operations
-			otelgrpc.UnaryServerInterceptor(matchingOtelOpts...),
-			metricsUnaryInterceptor, // Metrics interceptor
+			otelgrpc.UnaryServerInterceptor(otelOpts...),
+			metricsUnaryInterceptor,
 		),
 		grpc.ChainStreamInterceptor(
-			// Use Order Service interceptor for order-related operations
-			otelgrpc.StreamServerInterceptor(orderOtelOpts...),
-			// Use Matching Engine interceptor for matching operations
-			otelgrpc.StreamServerInterceptor(matchingOtelOpts...),
-			metricsStreamInterceptor, // Metrics interceptor
+			otelgrpc.StreamServerInterceptor(otelOpts...),
+			metricsStreamInterceptor,
 		),
 	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
