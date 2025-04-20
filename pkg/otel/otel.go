@@ -19,12 +19,20 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	ServiceOrder          = "order-service"
+	ServiceMatchingEngine = "matching-engine"
+)
+
 var (
-	tracer            trace.Tracer
-	resource          *sdkresource.Resource
-	initResourcesOnce sync.Once
-	tracerProvider    *sdktrace.TracerProvider
-	meterProvider     *sdkmetric.MeterProvider
+	orderServiceTracer     trace.Tracer
+	matchingEngineTracer   trace.Tracer
+	orderResource          *sdkresource.Resource
+	matchingEngineResource *sdkresource.Resource
+	initResourcesOnce      sync.Once
+	orderTracerProvider    *sdktrace.TracerProvider
+	matchingTracerProvider *sdktrace.TracerProvider
+	meterProvider          *sdkmetric.MeterProvider
 )
 
 // Config holds the OpenTelemetry configuration
@@ -39,9 +47,6 @@ type Config struct {
 
 // Init initializes OpenTelemetry with the given configuration
 func Init(cfg Config) (func(), error) {
-	if cfg.ServiceName == "" {
-		cfg.ServiceName = "matchingo"
-	}
 	if cfg.ServiceVersion == "" {
 		cfg.ServiceVersion = "0.1.0"
 	}
@@ -55,31 +60,48 @@ func Init(cfg Config) (func(), error) {
 		cfg.ReconnectDelay = 10 * time.Second
 	}
 
-	// Initialize resource
-	resource = initResource(cfg.ServiceName, cfg.ServiceVersion)
-
 	var cleanup []func()
 
-	// Initialize tracer provider
+	// Initialize resources for both services
+	orderResource = initResource(ServiceOrder, cfg.ServiceVersion)
+	matchingEngineResource = initResource(ServiceMatchingEngine, cfg.ServiceVersion)
+
+	// Initialize tracer providers for both services
 	if cfg.CollectorEnabled {
-		tp, err := initTracerProvider(cfg)
+		// Initialize Order Service tracer provider
+		orderTP, err := initTracerProvider(cfg, orderResource)
 		if err != nil {
-			log.Printf("Warning: Failed to initialize tracer provider: %v. Continuing without tracing.", err)
+			log.Printf("Warning: Failed to initialize order service tracer provider: %v", err)
 		} else {
-			tracerProvider = tp
+			orderTracerProvider = orderTP
 			cleanup = append(cleanup, func() {
 				ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
 				defer cancel()
-				if err := tp.Shutdown(ctx); err != nil {
-					log.Printf("Error shutting down tracer provider: %v", err)
+				if err := orderTP.Shutdown(ctx); err != nil {
+					log.Printf("Error shutting down order service tracer provider: %v", err)
+				}
+			})
+		}
+
+		// Initialize Matching Engine tracer provider
+		matchingTP, err := initTracerProvider(cfg, matchingEngineResource)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize matching engine tracer provider: %v", err)
+		} else {
+			matchingTracerProvider = matchingTP
+			cleanup = append(cleanup, func() {
+				ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
+				defer cancel()
+				if err := matchingTP.Shutdown(ctx); err != nil {
+					log.Printf("Error shutting down matching engine tracer provider: %v", err)
 				}
 			})
 		}
 	}
 
-	// Initialize meter provider
+	// Initialize meter provider (can be shared between services)
 	if cfg.CollectorEnabled {
-		mp, err := initMeterProvider(cfg)
+		mp, err := initMeterProvider(cfg, orderResource) // Using order resource as default for metrics
 		if err != nil {
 			log.Printf("Warning: Failed to initialize meter provider: %v. Continuing without metrics.", err)
 		} else {
@@ -94,9 +116,12 @@ func Init(cfg Config) (func(), error) {
 		}
 	}
 
-	// Create a tracer for this service
-	if tracerProvider != nil {
-		tracer = tracerProvider.Tracer(cfg.ServiceName)
+	// Create tracers for each service
+	if orderTracerProvider != nil {
+		orderServiceTracer = orderTracerProvider.Tracer(ServiceOrder)
+	}
+	if matchingTracerProvider != nil {
+		matchingEngineTracer = matchingTracerProvider.Tracer(ServiceMatchingEngine)
 	}
 
 	// Return cleanup function that executes all cleanup functions
@@ -108,27 +133,35 @@ func Init(cfg Config) (func(), error) {
 }
 
 func initResource(serviceName, serviceVersion string) *sdkresource.Resource {
-	initResourcesOnce.Do(func() {
-		extraResources, _ := sdkresource.New(
-			context.Background(),
-			sdkresource.WithOS(),
-			sdkresource.WithProcess(),
-			sdkresource.WithContainer(),
-			sdkresource.WithHost(),
-			sdkresource.WithAttributes(
-				semconv.ServiceName(serviceName),
-				semconv.ServiceVersion(serviceVersion),
-			),
-		)
-		resource, _ = sdkresource.Merge(
-			sdkresource.Default(),
-			extraResources,
-		)
-	})
+	extraResources, err := sdkresource.New(
+		context.Background(),
+		sdkresource.WithAttributes(
+			semconv.ServiceName(serviceName),
+			semconv.ServiceVersion(serviceVersion),
+		),
+		sdkresource.WithOS(),
+		sdkresource.WithProcess(),
+		sdkresource.WithContainer(),
+		sdkresource.WithHost(),
+	)
+	if err != nil {
+		log.Printf("Failed to create resource: %v", err)
+		return sdkresource.Default()
+	}
+
+	resource, err := sdkresource.Merge(
+		sdkresource.Default(),
+		extraResources,
+	)
+	if err != nil {
+		log.Printf("Failed to merge resources: %v", err)
+		return sdkresource.Default()
+	}
+
 	return resource
 }
 
-func initTracerProvider(cfg Config) (*sdktrace.TracerProvider, error) {
+func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.TracerProvider, error) {
 	ctx := context.Background()
 
 	// Create gRPC connection to collector
@@ -148,20 +181,25 @@ func initTracerProvider(cfg Config) (*sdktrace.TracerProvider, error) {
 		return nil, err
 	}
 
-	// Create tracer provider
+	// Create tracer provider with the specific resource
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource),
+		sdktrace.WithSampler(sdktrace.ParentBased(
+			sdktrace.TraceIDRatioBased(0.4), // Sample 10% of traces
+		)),
 	)
 
-	// Set global tracer provider and propagator
-	otel.SetTracerProvider(tp)
+	// Set the text map propagator (this is shared between services)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
+	// Set the tracer provider
+	otel.SetTracerProvider(tp)
 
 	return tp, nil
 }
 
-func initMeterProvider(cfg Config) (*sdkmetric.MeterProvider, error) {
+func initMeterProvider(cfg Config, resource *sdkresource.Resource) (*sdkmetric.MeterProvider, error) {
 	ctx := context.Background()
 
 	// Create gRPC connection to collector
@@ -193,17 +231,29 @@ func initMeterProvider(cfg Config) (*sdkmetric.MeterProvider, error) {
 	return mp, nil
 }
 
-// GetTracer returns the tracer for this service
-func GetTracer() trace.Tracer {
-	return tracer
+// GetOrderServiceTracer returns the tracer for the order service
+func GetOrderServiceTracer() trace.Tracer {
+	return orderServiceTracer
 }
 
-// GetTracerProvider returns the tracer provider
-func GetTracerProvider() trace.TracerProvider {
-	if tracerProvider == nil {
-		return otel.GetTracerProvider()
+// GetMatchingEngineTracer returns the tracer for the matching engine
+func GetMatchingEngineTracer() trace.Tracer {
+	return matchingEngineTracer
+}
+
+// GetTracerProvider returns the appropriate tracer provider based on the service name
+func GetTracerProvider(serviceName string) trace.TracerProvider {
+	switch serviceName {
+	case ServiceOrder:
+		if orderTracerProvider != nil {
+			return orderTracerProvider
+		}
+	case ServiceMatchingEngine:
+		if matchingTracerProvider != nil {
+			return matchingTracerProvider
+		}
 	}
-	return tracerProvider
+	return otel.GetTracerProvider()
 }
 
 // GetTextMapPropagator returns the configured propagator
