@@ -4,13 +4,17 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/erain9/matchingo/pkg/backend/memory"
 	"github.com/erain9/matchingo/pkg/core"
 	"github.com/erain9/matchingo/pkg/logging"
+	"github.com/erain9/matchingo/pkg/otel"
 	"github.com/nikolaydubina/fpdecimal"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -185,6 +189,17 @@ func (s *GRPCOrderBookService) DeleteOrderBook(ctx context.Context, req *proto.D
 
 // CreateOrder submits a new order to the specified order book
 func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.CreateOrderRequest) (*proto.OrderResponse, error) {
+	// Start a new span for the gRPC request
+	ctx, span := otel.StartOrderSpan(ctx, otel.SpanCreateOrder,
+		attribute.String(otel.AttributeOrderID, req.OrderId),
+		attribute.String(otel.AttributeOrderSide, req.Side.String()),
+		attribute.String(otel.AttributeOrderType, req.OrderType.String()),
+		attribute.String(otel.AttributeOrderQuantity, req.Quantity),
+		attribute.String(otel.AttributeOrderPrice, req.Price),
+		attribute.String("order_book", req.OrderBookName),
+	)
+	defer span.End()
+
 	logger := logging.FromContext(ctx).With().
 		Str("method", "CreateOrder").
 		Str("order_book", req.OrderBookName).
@@ -278,12 +293,14 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 	}
 
 	// Process the order
-	done, err = orderBook.Process(order)
+	done, err = orderBook.Process(ctx, order)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to process order")
 		if errors.Is(err, core.ErrOrderExists) {
+			span.SetStatus(otelcodes.Error, "order already exists")
 			return nil, status.Errorf(codes.AlreadyExists, "order with ID %s already exists", req.OrderId)
 		}
+		span.SetStatus(otelcodes.Error, fmt.Sprintf("failed to process order: %v", err))
 		return nil, status.Errorf(codes.Internal, "failed to process order: %v", err)
 	}
 
@@ -343,6 +360,15 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 
 	// Increment order count
 	s.manager.UpdateOrderBookInfo(ctx, req.OrderBookName, info.OrderCount+1)
+
+	// Add response attributes to span
+	otel.AddAttributes(span,
+		attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+		attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+		attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+		attribute.String(otel.AttributeOrderStatus, resp.Status.String()),
+	)
+	span.SetStatus(otelcodes.Ok, "order processed successfully")
 
 	return resp, nil
 }
