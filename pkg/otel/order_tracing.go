@@ -28,6 +28,18 @@ const (
 
 // StartOrderSpan starts a new span for order processing
 func StartOrderSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	var tracer trace.Tracer
+
+	// Use appropriate tracer based on the span name
+	switch name {
+	case SpanCreateOrder:
+		tracer = GetOrderServiceTracer()
+	case SpanProcessOrder, SpanMatchOrder, SpanSendToKafka:
+		tracer = GetMatchingEngineTracer()
+	default:
+		tracer = GetOrderServiceTracer()
+	}
+
 	if tracer == nil {
 		return ctx, nil
 	}
