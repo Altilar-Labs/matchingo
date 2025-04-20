@@ -406,3 +406,7 @@ func (o *Order) ToLimitOrder() *Order {
 func (o *Order) UserAddress() string {
 	return o.userAddress
 }
+
+func (o *Order) OrderType() OrderType {
+	return o.orderType
+}

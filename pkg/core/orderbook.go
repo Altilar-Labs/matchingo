@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -8,7 +9,10 @@ import (
 
 	"github.com/erain9/matchingo/pkg/db/queue"
 	"github.com/erain9/matchingo/pkg/messaging"
+	"github.com/erain9/matchingo/pkg/otel"
 	"github.com/nikolaydubina/fpdecimal"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // --- Message Sender Factory ---
@@ -93,20 +97,42 @@ func (ob *OrderBook) CancelOrder(orderID string) *Order {
 }
 
 // Process public method
-func (ob *OrderBook) Process(order *Order) (done *Done, err error) {
+func (ob *OrderBook) Process(ctx context.Context, order *Order) (done *Done, err error) {
+	// Start a new span for order processing
+	ctx, span := otel.StartOrderSpan(ctx, otel.SpanProcessOrder,
+		attribute.String(otel.AttributeOrderID, order.ID()),
+		attribute.String(otel.AttributeOrderSide, order.Side().String()),
+		attribute.String(otel.AttributeOrderType, string(order.OrderType())),
+		attribute.String(otel.AttributeOrderQuantity, order.Quantity().String()),
+		attribute.String(otel.AttributeOrderPrice, order.Price().String()),
+	)
+	defer span.End()
+
 	if order.IsMarketOrder() {
-		return ob.processMarketOrder(order)
+		done, err = ob.processMarketOrder(ctx, order)
+	} else if order.IsLimitOrder() {
+		done, err = ob.processLimitOrder(ctx, order)
+	} else if order.IsStopOrder() {
+		done, err = ob.processStopOrder(ctx, order)
+	} else {
+		span.SetStatus(codes.Error, "unrecognized order type")
+		panic("unrecognized order type")
 	}
 
-	if order.IsLimitOrder() {
-		return ob.processLimitOrder(order)
+	if err != nil {
+		span.SetStatus(codes.Error, "failed to process order")
+		return done, err
 	}
 
-	if order.IsStopOrder() {
-		return ob.processStopOrder(order)
-	}
+	// Add trade attributes to span
+	otel.AddAttributes(span,
+		attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+		attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+		attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+	)
+	span.SetStatus(codes.Ok, "order processed successfully")
 
-	panic("unrecognized order type")
+	return done, nil
 }
 
 // CalculateMarketPrice returns total market Price for requested quantity
@@ -193,16 +219,37 @@ func (ob *OrderBook) deleteOrder(order *Order) {
 	}
 }
 
-func (ob *OrderBook) processMarketOrder(marketOrder *Order) (*Done, error) {
+func (ob *OrderBook) processMarketOrder(ctx context.Context, marketOrder *Order) (*Done, error) {
+	// Start a new span for market order matching
+	ctx, span := otel.StartOrderSpan(ctx, otel.SpanMatchOrder,
+		attribute.String(otel.AttributeOrderID, marketOrder.ID()),
+		attribute.String(otel.AttributeOrderSide, marketOrder.Side().String()),
+		attribute.String(otel.AttributeOrderType, string(marketOrder.OrderType())),
+		attribute.String(otel.AttributeOrderQuantity, marketOrder.Quantity().String()),
+		attribute.String(otel.AttributeOrderPrice, marketOrder.Price().String()),
+	)
+	defer span.End()
+
+	// Add order attributes to span
+	otel.AddAttributes(span,
+		attribute.String(otel.AttributeOrderID, marketOrder.ID()),
+		attribute.String(otel.AttributeOrderSide, marketOrder.Side().String()),
+		attribute.String(otel.AttributeOrderType, string(marketOrder.OrderType())),
+		attribute.String(otel.AttributeOrderQuantity, marketOrder.Quantity().String()),
+		attribute.String(otel.AttributeOrderPrice, marketOrder.Price().String()),
+	)
+
 	quantity := marketOrder.Quantity()
 
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
+		span.SetStatus(codes.Error, "invalid quantity")
 		return nil, ErrInvalidQuantity
 	}
 
 	// Store the order first
 	err := ob.backend.StoreOrder(marketOrder)
 	if err != nil {
+		span.SetStatus(codes.Error, fmt.Sprintf("failed to store order: %v", err))
 		return nil, err
 	}
 
@@ -227,6 +274,7 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (*Done, error) {
 			done.appendOrder(marketOrder, fpdecimal.Zero, fpdecimal.Zero)
 			done.Stored = false
 			ob.backend.DeleteOrder(marketOrder.ID())
+			span.SetStatus(codes.Ok, "no liquidity available")
 			return done, nil
 		}
 
@@ -325,9 +373,19 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (*Done, error) {
 		// Update last trade price for stop orders if a trade occurred
 		if processedQty.GreaterThan(fpdecimal.Zero) {
 			ob.lastTradePrice = lastMatchPrice
-			ob.checkStopOrderTrigger(ob.lastTradePrice)
-			sendToKafka(done)
+			ob.checkStopOrderTrigger(ctx, ob.lastTradePrice)
+
+			// Send to Kafka using the parent context
+			sendToKafka(ctx, done)
 		}
+
+		// Add trade attributes to span
+		otel.AddAttributes(span,
+			attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+			attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+			attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+		)
+		span.SetStatus(codes.Ok, "market order processed successfully")
 
 		return done, nil
 	}
@@ -336,11 +394,32 @@ func (ob *OrderBook) processMarketOrder(marketOrder *Order) (*Done, error) {
 	ob.backend.DeleteOrder(marketOrder.ID())
 	done.Left = quantity
 	done.Stored = false
+	span.SetStatus(codes.Error, "unrecognized order book interface")
 	return done, nil
 }
 
-func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
+func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (*Done, error) {
+	// Start a new span for limit order matching
+	ctx, span := otel.StartOrderSpan(ctx, otel.SpanMatchOrder,
+		attribute.String(otel.AttributeOrderID, limitOrder.ID()),
+		attribute.String(otel.AttributeOrderSide, limitOrder.Side().String()),
+		attribute.String(otel.AttributeOrderType, string(limitOrder.OrderType())),
+		attribute.String(otel.AttributeOrderQuantity, limitOrder.Quantity().String()),
+		attribute.String(otel.AttributeOrderPrice, limitOrder.Price().String()),
+	)
+	defer span.End()
+
+	// Add order attributes to span
+	otel.AddAttributes(span,
+		attribute.String(otel.AttributeOrderID, limitOrder.ID()),
+		attribute.String(otel.AttributeOrderSide, limitOrder.Side().String()),
+		attribute.String(otel.AttributeOrderType, string(limitOrder.OrderType())),
+		attribute.String(otel.AttributeOrderQuantity, limitOrder.Quantity().String()),
+		attribute.String(otel.AttributeOrderPrice, limitOrder.Price().String()),
+	)
+
 	if !limitOrder.IsLimitOrder() {
+		span.SetStatus(codes.Error, "invalid argument: not a limit order")
 		return nil, ErrInvalidArgument
 	}
 
@@ -351,6 +430,7 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 			// The order has been converted from stop to limit, allow processing
 			log.Printf("Order %s has been converted from stop to limit\n", limitOrder.ID())
 		} else {
+			span.SetStatus(codes.Error, "order already exists")
 			return nil, ErrOrderExists
 		}
 	}
@@ -360,6 +440,7 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 	// Store the limit order
 	err := ob.backend.StoreOrder(limitOrder)
 	if err != nil {
+		span.SetStatus(codes.Error, "failed to store limit order")
 		return nil, fmt.Errorf("error storing limit order: %w", err)
 	}
 
@@ -508,7 +589,7 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 
 			// FOK cancellation should also send a message
 			fmt.Printf("Sending FOK cancellation message for order %s\n", limitOrder.ID())
-			sendToKafka(done)
+			sendToKafka(ctx, done)
 
 			return done, nil
 		}
@@ -566,10 +647,10 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 
 			// Update last trade price for stop orders
 			ob.lastTradePrice = lastMatchPrice
-			ob.checkStopOrderTrigger(ob.lastTradePrice)
+			ob.checkStopOrderTrigger(ctx, ob.lastTradePrice)
 
 			// Send the message to Kafka
-			sendToKafka(done)
+			sendToKafka(ctx, done)
 
 			return done, nil
 		}
@@ -589,8 +670,8 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 				// Update last trade price for stop orders if a trade occurred
 				if processedQty.GreaterThan(fpdecimal.Zero) {
 					ob.lastTradePrice = lastMatchPrice
-					ob.checkStopOrderTrigger(ob.lastTradePrice)
-					sendToKafka(done)
+					ob.checkStopOrderTrigger(ctx, ob.lastTradePrice)
+					sendToKafka(ctx, done)
 				}
 
 				return done, nil
@@ -629,9 +710,19 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 		if processedQty.GreaterThan(fpdecimal.Zero) {
 			// Use the price of the last matched order as the trade price
 			ob.lastTradePrice = lastMatchPrice
-			ob.checkStopOrderTrigger(ob.lastTradePrice)
-			sendToKafka(done)
+			ob.checkStopOrderTrigger(ctx, ob.lastTradePrice)
+
+			// Send to Kafka using the parent context
+			sendToKafka(ctx, done)
 		}
+
+		// Add trade attributes to span
+		otel.AddAttributes(span,
+			attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+			attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+			attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+		)
+		span.SetStatus(codes.Ok, "limit order processed successfully")
 
 		return done, nil
 	}
@@ -644,7 +735,7 @@ func (ob *OrderBook) processLimitOrder(limitOrder *Order) (*Done, error) {
 	return done, nil
 }
 
-func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
+func (ob *OrderBook) processStopOrder(ctx context.Context, stopOrder *Order) (*Done, error) {
 	if !stopOrder.IsStopOrder() {
 		return nil, ErrInvalidArgument
 	}
@@ -656,69 +747,43 @@ func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
 
 	done := newDone(stopOrder)
 
-	// Store the stop order first
+	// Store the stop order
 	err := ob.backend.StoreOrder(stopOrder)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error storing stop order: %w", err)
 	}
 
-	// Check if stop price is triggered
-	isTriggerConditionMet := false
-	if !ob.lastTradePrice.Equal(fpdecimal.Zero) {
-		if (stopOrder.Side() == Buy && ob.lastTradePrice.GreaterThanOrEqual(stopOrder.StopPrice())) ||
-			(stopOrder.Side() == Sell && ob.lastTradePrice.LessThanOrEqual(stopOrder.StopPrice())) {
-			isTriggerConditionMet = true
+	// Check if the stop order should be triggered immediately
+	if ob.lastTradePrice.GreaterThan(fpdecimal.Zero) {
+		triggered := false
+		if stopOrder.Side() == Buy && ob.lastTradePrice.GreaterThanOrEqual(stopOrder.StopPrice()) {
+			triggered = true
+		} else if stopOrder.Side() == Sell && ob.lastTradePrice.LessThanOrEqual(stopOrder.StopPrice()) {
+			triggered = true
 		}
-	}
 
-	if isTriggerConditionMet {
-		// Convert to limit order
-		limitOrder, err := NewLimitOrder(
-			stopOrder.ID(),
-			stopOrder.Side(),
-			stopOrder.Quantity(),
-			stopOrder.Price(),
-			stopOrder.TIF(),
-			stopOrder.OCO(),
-			stopOrder.UserAddress(),
-		)
-		if err != nil {
+		if triggered {
+			// Convert to limit order and process
+			limitOrder := stopOrder.ToLimitOrder()
+
+			// Delete the stop order first
 			ob.backend.DeleteOrder(stopOrder.ID())
-			return nil, err
+
+			// Process as limit order
+			limitDone, err := ob.processLimitOrder(ctx, limitOrder)
+			if err != nil {
+				return nil, fmt.Errorf("error processing triggered stop order: %w", err)
+			}
+
+			// Merge the results
+			done.Trades = limitDone.Trades
+			done.Left = limitDone.Left
+			done.Stored = limitDone.Stored
+
+			// Send done message to Kafka
+			sendToKafka(ctx, done)
+			return done, nil
 		}
-
-		// Remove from stop book before triggering (it could be not there yet, but that's fine)
-		ob.backend.RemoveFromStopBook(stopOrder)
-
-		// Delete the stop order from storage before storing the limit order with the same ID
-		ob.backend.DeleteOrder(stopOrder.ID())
-
-		// Update order record to reflect conversion from stop to limit
-		err = ob.backend.StoreOrder(limitOrder)
-		if err != nil {
-			return nil, err
-		}
-
-		// Store that the order was activated
-		done.appendActivated(stopOrder)
-
-		// Process as limit order
-		limitDone, err := ob.processLimitOrder(limitOrder)
-		if err != nil {
-			// Even if we get an error here, we've already converted the stop order to limit
-			// So we should still indicate the activation in the done object
-			return done, err
-		}
-
-		// Copy relevant fields from limitDone to our done
-		done.Trades = limitDone.Trades
-		done.Processed = limitDone.Processed
-		done.Left = limitDone.Left
-		done.Stored = limitDone.Stored
-
-		// Send done message to Kafka
-		sendToKafka(done)
-		return done, nil
 	}
 
 	// Add to stop book if not triggered
@@ -729,12 +794,12 @@ func (ob *OrderBook) processStopOrder(stopOrder *Order) (*Done, error) {
 	done.appendOrder(stopOrder, fpdecimal.Zero, stopOrder.Price())
 
 	// Send the message about storing the stop order
-	sendToKafka(done)
+	sendToKafka(ctx, done)
 	return done, nil
 }
 
 // Helper function to check if a stop order should be triggered
-func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
+func (ob *OrderBook) checkStopOrderTrigger(ctx context.Context, lastPrice fpdecimal.Decimal) {
 	// Update the last trade price
 	ob.lastTradePrice = lastPrice
 	stopBook := ob.backend.GetStopBook()
@@ -748,7 +813,7 @@ func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
 		buyStops := stopBookInterface.BuyOrders()
 		for _, order := range buyStops {
 			if lastPrice.GreaterThanOrEqual(order.StopPrice()) {
-				ob.triggerStopOrder(order)
+				ob.triggerStopOrder(ctx, order)
 			}
 		}
 
@@ -756,7 +821,7 @@ func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
 		sellStops := stopBookInterface.SellOrders()
 		for _, order := range sellStops {
 			if lastPrice.LessThanOrEqual(order.StopPrice()) {
-				ob.triggerStopOrder(order)
+				ob.triggerStopOrder(ctx, order)
 			}
 		}
 		return // Successfully processed using the side-based interface
@@ -779,7 +844,7 @@ func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
 				}
 
 				if triggered {
-					ob.triggerStopOrder(order)
+					ob.triggerStopOrder(ctx, order)
 				}
 			}
 		}
@@ -787,7 +852,7 @@ func (ob *OrderBook) checkStopOrderTrigger(lastPrice fpdecimal.Decimal) {
 }
 
 // Helper to trigger a stop order
-func (ob *OrderBook) triggerStopOrder(order *Order) {
+func (ob *OrderBook) triggerStopOrder(ctx context.Context, order *Order) {
 	// Remove the stop order from the stop book
 	ob.backend.RemoveFromStopBook(order)
 
@@ -832,11 +897,11 @@ func (ob *OrderBook) triggerStopOrder(order *Order) {
 	done.appendActivated(order)
 
 	// Process the newly activated limit order
-	limitDone, processErr := ob.processLimitOrder(limitOrder)
+	limitDone, processErr := ob.processLimitOrder(ctx, limitOrder)
 	if processErr != nil {
 		fmt.Printf("Error processing activated limit order: %v\n", processErr)
 		// Still send activation message to Kafka
-		sendToKafka(done)
+		sendToKafka(ctx, done)
 		return
 	}
 
@@ -847,7 +912,7 @@ func (ob *OrderBook) triggerStopOrder(order *Order) {
 	done.Stored = limitDone.Stored
 
 	// Send the complete message to Kafka
-	sendToKafka(done)
+	sendToKafka(ctx, done)
 }
 
 func (ob *OrderBook) checkOCO(order *Order, done *Done) bool {
@@ -977,11 +1042,31 @@ func convertTrades(trades []TradeOrder) []messaging.Trade {
 }
 
 // sendToKafka sends the execution result using the configured message sender.
-func sendToKafka(done *Done) {
+func sendToKafka(ctx context.Context, done *Done) {
+	// Create a new child span for Kafka operation
+	ctx, span := otel.StartOrderSpan(ctx, otel.SpanSendToKafka,
+		attribute.String(otel.AttributeOrderID, done.Order.ID()),
+		attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+		attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+		attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+	)
+	defer span.End()
+
+	// Use the context in the message sending operation
+	if err := sendMessageWithContext(ctx, done); err != nil {
+		span.SetStatus(codes.Error, fmt.Sprintf("failed to send message: %v", err))
+		fmt.Printf("Error sending message via configured sender: %v\n", err)
+	} else {
+		span.SetStatus(codes.Ok, "message sent successfully")
+		fmt.Printf("Successfully sent message for order: %s\n", done.Order.ID())
+	}
+}
+
+// Helper function to send message with context
+func sendMessageWithContext(ctx context.Context, done *Done) error {
 	// Debug log the Done object
 	if done == nil {
-		fmt.Println("Error: done is nil in sendToKafka")
-		return
+		return fmt.Errorf("done is nil in sendToKafka")
 	}
 
 	// Print debug information
@@ -989,25 +1074,16 @@ func sendToKafka(done *Done) {
 		done.Order.ID(), done.Processed.String(), done.Left.String(), done.Stored, len(done.Trades), len(done.Canceled))
 
 	// Convert core.Done to messaging.DoneMessage
-	msg := done.ToMessagingDoneMessage() // Method is defined on Done in types.go
+	msg := done.ToMessagingDoneMessage()
 	if msg == nil {
-		// TODO: Use proper logger
-		fmt.Println("Error: Failed to convert Done to MessagingDoneMessage (nil result)")
-		return
+		return fmt.Errorf("failed to convert Done to MessagingDoneMessage")
 	}
 
 	// Get sender using the factory
 	sender := getMessageSender()
 	if sender == nil {
-		fmt.Println("Error: message sender is nil")
-		return
+		return fmt.Errorf("message sender is nil")
 	}
 
-	err := sender.SendDoneMessage(msg)
-	if err != nil {
-		// TODO: Use a proper logger passed down or configured globally
-		fmt.Printf("Error sending message via configured sender: %v\n", err)
-	} else {
-		fmt.Printf("Successfully sent message for order: %s\n", done.Order.ID())
-	}
+	return sender.SendDoneMessage(msg)
 }

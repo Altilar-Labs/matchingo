@@ -197,3 +197,16 @@ func initMeterProvider(cfg Config) (*sdkmetric.MeterProvider, error) {
 func GetTracer() trace.Tracer {
 	return tracer
 }
+
+// GetTracerProvider returns the tracer provider
+func GetTracerProvider() trace.TracerProvider {
+	if tracerProvider == nil {
+		return otel.GetTracerProvider()
+	}
+	return tracerProvider
+}
+
+// GetTextMapPropagator returns the configured propagator
+func GetTextMapPropagator() propagation.TextMapPropagator {
+	return otel.GetTextMapPropagator()
+}
