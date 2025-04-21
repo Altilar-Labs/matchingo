@@ -29,6 +29,7 @@ func NewOrderQueue(price fpdecimal.Decimal) *OrderQueue {
 
 // OrderSide represents one side (bid/ask) of the order book
 type OrderSide struct {
+	sync.RWMutex
 	head    *OrderQueue
 	tail    *OrderQueue
 	orderID map[string]*OrderQueue
@@ -36,12 +37,14 @@ type OrderSide struct {
 
 // String implements fmt.Stringer interface
 func (os *OrderSide) String() string {
+	os.RLock()
+	defer os.RUnlock()
+
 	sb := strings.Builder{}
 	current := os.head
 
 	for current != nil {
 		orderCount := len(current.orders)
-
 		sb.WriteString(fmt.Sprintf("\n%s -> orders: %d", current.priceStr, orderCount))
 		current = current.next
 	}
@@ -51,6 +54,9 @@ func (os *OrderSide) String() string {
 
 // Prices returns all prices in the order side
 func (os *OrderSide) Prices() []fpdecimal.Decimal {
+	os.RLock()
+	defer os.RUnlock()
+
 	prices := make([]fpdecimal.Decimal, 0)
 	current := os.head
 
@@ -64,6 +70,9 @@ func (os *OrderSide) Prices() []fpdecimal.Decimal {
 
 // Orders returns all orders at a given price level
 func (os *OrderSide) Orders(price fpdecimal.Decimal) []*core.Order {
+	os.RLock()
+	defer os.RUnlock()
+
 	priceStr := price.String()
 	queue, exists := os.orderID[priceStr]
 	if !exists {
@@ -265,6 +274,9 @@ func (b *MemoryBackend) AppendToSide(side core.Side, order *core.Order) {
 	b.Lock()
 	defer b.Unlock()
 
+	orderSide.Lock()
+	defer orderSide.Unlock()
+
 	price := order.Price()
 	priceStr := price.String()
 
@@ -352,6 +364,9 @@ func (b *MemoryBackend) RemoveFromSide(side core.Side, order *core.Order) bool {
 
 	b.Lock()
 	defer b.Unlock()
+
+	orderSide.Lock()
+	defer orderSide.Unlock()
 
 	priceStr := order.Price().String()
 	queue, ok := orderSide.orderID[priceStr]
@@ -531,15 +546,21 @@ func (b *MemoryBackend) CheckOCO(orderID string) string {
 
 // GetBids returns the bid side of the order book for iteration
 func (b *MemoryBackend) GetBids() interface{} {
+	b.RLock()
+	defer b.RUnlock()
 	return b.bids
 }
 
 // GetAsks returns the ask side of the order book for iteration
 func (b *MemoryBackend) GetAsks() interface{} {
+	b.RLock()
+	defer b.RUnlock()
 	return b.asks
 }
 
 // GetStopBook returns the stop book for iteration
 func (b *MemoryBackend) GetStopBook() interface{} {
+	b.RLock()
+	defer b.RUnlock()
 	return b.stopBook
 }
