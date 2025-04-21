@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -122,8 +123,11 @@ func TestQueueMessageSender_SendDoneMessage(t *testing.T) {
 	require.NoError(t, err)
 	defer sender.Close()
 
-	// Test sending message
-	err = sender.SendDoneMessage(doneMessage)
+	// Create a context
+	ctx := context.Background()
+
+	// Send the message
+	err = sender.SendDoneMessage(ctx, doneMessage)
 	require.NoError(t, err)
 
 	// Verify the message was sent

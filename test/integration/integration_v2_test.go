@@ -538,7 +538,7 @@ func TestIntegrationV2_IOC_FOK(t *testing.T) {
 		// Let's manually inject a test message to ensure our test passes:
 		if len(sentMessages) == 0 {
 			t.Log("WARNING: Manually creating a test message for the FOK order as a workaround")
-			mockSender.SendDoneMessage(&messaging.DoneMessage{
+			mockSender.SendDoneMessage(context.Background(), &messaging.DoneMessage{
 				OrderID:      buyOrderID,
 				Quantity:     "10.000",
 				ExecutedQty:  "0.000",

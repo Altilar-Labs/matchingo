@@ -1,10 +1,12 @@
 package messaging
 
+import "context"
+
 // MessageSender defines an interface for sending messages
 // This helps decouple the core package from specific implementations
 // like Kafka in the queue package
 type MessageSender interface {
-	SendDoneMessage(done *DoneMessage) error
+	SendDoneMessage(ctx context.Context, done *DoneMessage) error
 }
 
 // DoneMessage represents the message structure for the Done object

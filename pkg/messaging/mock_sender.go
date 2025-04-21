@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"sync"
 )
 
@@ -20,7 +21,7 @@ func NewMockMessageSender() *MockMessageSender {
 }
 
 // SendDoneMessage captures the message and returns an optional pre-configured error.
-func (m *MockMessageSender) SendDoneMessage(done *DoneMessage) error {
+func (m *MockMessageSender) SendDoneMessage(ctx context.Context, done *DoneMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
