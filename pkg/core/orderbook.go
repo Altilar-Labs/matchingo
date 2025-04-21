@@ -20,6 +20,7 @@ import (
 var (
 	messageSenderFactory func() messaging.MessageSender
 	factoryMu            sync.Mutex
+	singletonSender      messaging.MessageSender
 )
 
 // defaultMessageSenderFactory returns the default Kafka sender.
@@ -44,17 +45,28 @@ func SetMessageSenderFactory(factory func() messaging.MessageSender) {
 	} else {
 		messageSenderFactory = factory
 	}
+	// Reset singleton when factory changes
+	singletonSender = nil
 }
 
 // getMessageSender returns the currently configured message sender.
 func getMessageSender() messaging.MessageSender {
 	factoryMu.Lock()
 	defer factoryMu.Unlock()
-	// Initialize with default if not set
+
+	// Return existing singleton if available
+	if singletonSender != nil {
+		return singletonSender
+	}
+
+	// Initialize factory with default if not set
 	if messageSenderFactory == nil {
 		messageSenderFactory = defaultMessageSenderFactory
 	}
-	return messageSenderFactory()
+
+	// Create new sender and store as singleton
+	singletonSender = messageSenderFactory()
+	return singletonSender
 }
 
 // --- OrderBook ---
