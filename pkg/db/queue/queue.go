@@ -1,11 +1,14 @@
 package queue
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/IBM/sarama"
 	orderbookpb "github.com/erain9/matchingo/pkg/api/proto"
 	"github.com/erain9/matchingo/pkg/messaging"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -28,7 +31,8 @@ func SetTopic(topicName string) {
 // QueueMessageSender implements the MessageSender interface
 // for sending messages to Kafka
 type QueueMessageSender struct {
-	producer sarama.SyncProducer
+	producer   sarama.SyncProducer
+	propagator propagation.TextMapPropagator
 }
 
 // NewQueueMessageSender creates a new QueueMessageSender with an initialized Kafka producer
@@ -39,7 +43,8 @@ func NewQueueMessageSender() (*QueueMessageSender, error) {
 	}
 
 	return &QueueMessageSender{
-		producer: producer,
+		producer:   producer,
+		propagator: otel.GetTextMapPropagator(),
 	}, nil
 }
 
@@ -52,7 +57,7 @@ func (q *QueueMessageSender) Close() error {
 }
 
 // SendDoneMessage sends the DoneMessage to the Kafka queue
-func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error {
+func (q *QueueMessageSender) SendDoneMessage(ctx context.Context, done *messaging.DoneMessage) error {
 	// Convert to proto message
 	protoMsg := &orderbookpb.DoneMessage{
 		OrderId:           done.OrderID,
@@ -90,8 +95,19 @@ func (q *QueueMessageSender) SendDoneMessage(done *messaging.DoneMessage) error 
 
 	// Create a Kafka producer message
 	msg := &sarama.ProducerMessage{
-		Topic: topic,
-		Value: sarama.ByteEncoder(messageBytes),
+		Topic:   topic,
+		Value:   sarama.ByteEncoder(messageBytes),
+		Headers: []sarama.RecordHeader{},
+	}
+
+	// Inject OpenTelemetry context into headers
+	carrier := propagation.MapCarrier{}
+	q.propagator.Inject(ctx, carrier)
+	for k, v := range carrier {
+		msg.Headers = append(msg.Headers, sarama.RecordHeader{
+			Key:   []byte(k),
+			Value: []byte(v),
+		})
 	}
 
 	// Send the message to Kafka using the existing producer

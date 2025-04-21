@@ -1097,5 +1097,5 @@ func sendMessageWithContext(ctx context.Context, done *Done) error {
 		return fmt.Errorf("message sender is nil")
 	}
 
-	return sender.SendDoneMessage(msg)
+	return sender.SendDoneMessage(ctx, msg)
 }
