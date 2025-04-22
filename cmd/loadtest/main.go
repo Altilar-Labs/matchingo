@@ -13,7 +13,9 @@ import (
 
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/erain9/matchingo/pkg/api/proto"
 )
@@ -48,16 +50,39 @@ func main() {
 		cancel()
 	}()
 
-	// Create test order book
+	// Ensure clean state for test order book
 	bookName := "load-test-order-book"
+	log.Printf("Checking for existing order book: %s", bookName)
+	_, err = client.GetOrderBook(ctx, &pb.GetOrderBookRequest{Name: bookName})
+	if err == nil {
+		// Order book exists, delete it first
+		log.Printf("Order book '%s' found, deleting it...", bookName)
+		_, err = client.DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{Name: bookName})
+		if err != nil {
+			log.Fatalf("Failed to delete existing order book '%s': %v", bookName, err)
+		}
+		log.Printf("Successfully deleted existing order book: %s", bookName)
+	} else {
+		// Check if the error is 'NotFound'
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.NotFound {
+			// Unexpected error during GetOrderBook
+			log.Fatalf("Failed to check for order book '%s': %v", bookName, err)
+		}
+		// Order book does not exist, which is fine
+		log.Printf("Order book '%s' not found, proceeding to create.", bookName)
+	}
+
+	// Create test order book
+	log.Printf("Creating order book: %s", bookName)
 	_, err = client.CreateOrderBook(ctx, &pb.CreateOrderBookRequest{
 		Name:        bookName,
 		BackendType: pb.BackendType_MEMORY,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create order book: %v", err)
+		log.Fatalf("Failed to create order book '%s': %v", bookName, err)
 	}
-	log.Printf("Created order book: %s", bookName)
+	log.Printf("Successfully created order book: %s", bookName)
 
 	// Set up rate limiter and wait group
 	limiter := rate.NewLimiter(rate.Limit(maxConcurrentReqs), maxConcurrentReqs)
