@@ -135,16 +135,18 @@ func generateRandomOrder(bookName string, orderNum int) *pb.OrderResponse {
 		side = pb.OrderSide_SELL
 	}
 
-	// Use float64 for price and quantity, format as string with 2 decimal places
-	priceF := 90.0 + r.Float64()*20.0  // Random price between 90.00 and 110.00
-	quantityF := 1.0 + r.Float64()*9.0 // Random quantity between 1.00 and 10.00
+	// Use fixed price and quantity for higher matching probability
+	const (
+		fixedPrice    = "100.00"
+		fixedQuantity = "10.00"
+	)
 
 	return &pb.OrderResponse{
 		OrderId:       fmt.Sprintf("order-%d", orderNum),
 		OrderBookName: bookName,
 		Side:          side,
-		Price:         fmt.Sprintf("%.2f", priceF),
-		Quantity:      fmt.Sprintf("%.2f", quantityF),
+		Price:         fixedPrice,
+		Quantity:      fixedQuantity,
 		OrderType:     pb.OrderType_LIMIT,
 	}
 }
