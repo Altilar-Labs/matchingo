@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/erain9/matchingo/pkg/db/queue"
 	"github.com/erain9/matchingo/pkg/messaging"
@@ -14,62 +13,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
-
-// --- Message Sender Factory ---
-
-var (
-	messageSenderFactory func() messaging.MessageSender
-	factoryMu            sync.Mutex
-	singletonSender      messaging.MessageSender
-)
-
-// defaultMessageSenderFactory returns the default Kafka sender.
-func defaultMessageSenderFactory() messaging.MessageSender {
-	sender, err := queue.NewQueueMessageSender()
-	if err != nil {
-		// Log the error but return a nil sender
-		// The caller should handle the nil case
-		fmt.Printf("Error creating message sender: %v\n", err)
-		return nil
-	}
-	return sender
-}
-
-// SetMessageSenderFactory allows overriding the default message sender, primarily for testing.
-// Pass nil to reset to the default Kafka sender.
-func SetMessageSenderFactory(factory func() messaging.MessageSender) {
-	factoryMu.Lock()
-	defer factoryMu.Unlock()
-	if factory == nil {
-		messageSenderFactory = defaultMessageSenderFactory
-	} else {
-		messageSenderFactory = factory
-	}
-	// Reset singleton when factory changes
-	singletonSender = nil
-}
-
-// getMessageSender returns the currently configured message sender.
-func getMessageSender() messaging.MessageSender {
-	factoryMu.Lock()
-	defer factoryMu.Unlock()
-
-	// Return existing singleton if available
-	if singletonSender != nil {
-		return singletonSender
-	}
-
-	// Initialize factory with default if not set
-	if messageSenderFactory == nil {
-		messageSenderFactory = defaultMessageSenderFactory
-	}
-
-	// Create new sender and store as singleton
-	singletonSender = messageSenderFactory()
-	return singletonSender
-}
-
-// --- OrderBook ---
 
 // OrderBook implements standard matching algorithm
 type OrderBook struct {
@@ -1053,9 +996,13 @@ func convertTrades(trades []TradeOrder) []messaging.Trade {
 	return converted
 }
 
-// sendToKafka sends the execution result using the configured message sender.
+// sendToKafka sends the order execution result to Kafka.
 func sendToKafka(ctx context.Context, done *Done) {
-	// Create a new child span for Kafka operation
+	if done == nil {
+		return
+	}
+
+	// Create a new span for message sending
 	ctx, span := otel.StartOrderSpan(ctx, otel.SpanSendToKafka,
 		attribute.String(otel.AttributeOrderID, done.Order.ID()),
 		attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
@@ -1064,38 +1011,18 @@ func sendToKafka(ctx context.Context, done *Done) {
 	)
 	defer span.End()
 
-	// Use the context in the message sending operation
-	if err := sendMessageWithContext(ctx, done); err != nil {
-		span.SetStatus(codes.Error, fmt.Sprintf("failed to send message: %v", err))
-		fmt.Printf("Error sending message via configured sender: %v\n", err)
-	} else {
-		span.SetStatus(codes.Ok, "message sent successfully")
-		fmt.Printf("Successfully sent message for order: %s\n", done.Order.ID())
-	}
-}
-
-// Helper function to send message with context
-func sendMessageWithContext(ctx context.Context, done *Done) error {
-	// Debug log the Done object
-	if done == nil {
-		return fmt.Errorf("done is nil in sendToKafka")
-	}
-
-	// Print debug information
-	fmt.Printf("Sending message for order: %s, processed: %s, left: %s, stored: %t, trades: %d, canceled: %d\n",
-		done.Order.ID(), done.Processed.String(), done.Left.String(), done.Stored, len(done.Trades), len(done.Canceled))
-
-	// Convert core.Done to messaging.DoneMessage
+	// Convert to message format
 	msg := done.ToMessagingDoneMessage()
 	if msg == nil {
-		return fmt.Errorf("failed to convert Done to MessagingDoneMessage")
+		span.SetStatus(codes.Error, "failed to convert order to message format")
+		return
 	}
 
-	// Get sender using the factory
-	sender := getMessageSender()
-	if sender == nil {
-		return fmt.Errorf("message sender is nil")
+	// Send to queue
+	if err := queue.SendMessage(ctx, msg); err != nil {
+		span.SetStatus(codes.Error, fmt.Sprintf("failed to send order message: %v", err))
+		return
 	}
 
-	return sender.SendDoneMessage(ctx, msg)
+	span.SetStatus(codes.Ok, "order message sent successfully")
 }
