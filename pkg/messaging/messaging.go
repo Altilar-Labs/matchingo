@@ -7,6 +7,7 @@ import "context"
 // like Kafka in the queue package
 type MessageSender interface {
 	SendDoneMessage(ctx context.Context, done *DoneMessage) error
+	Close() error
 }
 
 // DoneMessage represents the message structure for the Done object
