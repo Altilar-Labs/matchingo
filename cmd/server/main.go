@@ -157,19 +157,28 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 			otelgrpc.StreamServerInterceptor(otelOpts...),
 			metricsStreamInterceptor,
 		),
-		// Configure server for high throughput
-		grpc.MaxConcurrentStreams(5000),
-		grpc.InitialWindowSize(1<<24),
-		grpc.InitialConnWindowSize(1<<24),
-		grpc.WriteBufferSize(1024*1024),
-		grpc.ReadBufferSize(1024*1024),
+		grpc.MaxConcurrentStreams(100000),
+		// Increase connection idle timeout
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     time.Minute,
-			MaxConnectionAge:      5 * time.Minute,
-			MaxConnectionAgeGrace: 20 * time.Second,
-			Time:                  20 * time.Second,
-			Timeout:               10 * time.Second,
+			MaxConnectionAge:      time.Hour,
+			MaxConnectionAgeGrace: time.Minute,
+			Time:                  10 * time.Second,
+			Timeout:               5 * time.Second,
 		}),
+		// Configure keepalive enforcement policy
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+
+		grpc.MaxRecvMsgSize(100*1024*1024),
+		grpc.MaxSendMsgSize(100*1024*1024),
+		grpc.WriteBufferSize(64*1024),
+		grpc.ReadBufferSize(64*1024),
+		grpc.InitialWindowSize(1<<24),
+		grpc.InitialConnWindowSize(1<<24),
+		grpc.MaxHeaderListSize(16*1024),
 	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)
