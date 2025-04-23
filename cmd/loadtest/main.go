@@ -22,7 +22,7 @@ import (
 const (
 	numWorkers        = 100
 	ordersPerWorker   = 100000
-	maxConcurrentReqs = 40000
+	maxConcurrentReqs = 80000
 )
 
 func main() {
@@ -31,7 +31,7 @@ func main() {
 
 	var conns []*grpc.ClientConn
 	var clients []pb.OrderBookServiceClient
-	numConns := 10
+	numConns := 20
 
 	for i := 0; i < numConns; i++ {
 		conn, err := grpc.Dial(*grpcAddr,
