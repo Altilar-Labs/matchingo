@@ -5,23 +5,45 @@ import (
 	"testing"
 
 	"github.com/erain9/matchingo/pkg/api/proto"
+	pkgotel "github.com/erain9/matchingo/pkg/otel"
 	"github.com/nikolaydubina/fpdecimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func TestGRPCOrderBookService(t *testing.T) {
+	// Initialize OpenTelemetry for testing
+	tp := trace.NewTracerProvider()
+	otel.SetTracerProvider(tp)
+
+	// Register a test tracer
+	testTracer := tp.Tracer("test-tracer")
+
+	// Ensure we reset OpenTelemetry after the test
+	defer func() {
+		pkgotel.ResetForTesting()
+		tp.Shutdown(context.Background())
+	}()
+
+	// Initialize test tracers
+	err := pkgotel.InitForTesting(testTracer)
+	require.NoError(t, err, "Failed to initialize OpenTelemetry for testing")
+
+	// Create a test context with a valid span
+	ctx := context.Background()
+	ctx, span := testTracer.Start(ctx, "test")
+	defer span.End()
+
 	// Create a test manager
 	manager := NewOrderBookManager()
 	defer manager.Close()
 
 	// Create gRPC service
 	service := NewGRPCOrderBookService(manager)
-
-	// Create a test context
-	ctx := context.Background()
 
 	// Test creating an order book
 	t.Run("CreateOrderBook", func(t *testing.T) {

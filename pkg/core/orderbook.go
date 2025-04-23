@@ -53,6 +53,10 @@ func (ob *OrderBook) CancelOrder(orderID string) *Order {
 
 // Process public method
 func (ob *OrderBook) Process(ctx context.Context, order *Order) (done *Done, err error) {
+	if order == nil {
+		return nil, fmt.Errorf("cannot process nil order")
+	}
+
 	// Start a new span for order processing
 	ctx, span := otel.StartOrderSpan(ctx, otel.SpanProcessOrder,
 		attribute.String(otel.AttributeOrderID, order.ID()),
@@ -70,8 +74,10 @@ func (ob *OrderBook) Process(ctx context.Context, order *Order) (done *Done, err
 	} else if order.IsStopOrder() {
 		done, err = ob.processStopOrder(ctx, order)
 	} else {
-		span.SetStatus(codes.Error, "unrecognized order type")
-		panic("unrecognized order type")
+		if span != nil {
+			span.SetStatus(codes.Error, "unrecognized order type")
+		}
+		return nil, fmt.Errorf("unrecognized order type")
 	}
 
 	if err != nil {
@@ -186,18 +192,22 @@ func (ob *OrderBook) processMarketOrder(ctx context.Context, marketOrder *Order)
 	defer span.End()
 
 	// Add order attributes to span
-	otel.AddAttributes(span,
-		attribute.String(otel.AttributeOrderID, marketOrder.ID()),
-		attribute.String(otel.AttributeOrderSide, marketOrder.Side().String()),
-		attribute.String(otel.AttributeOrderType, string(marketOrder.OrderType())),
-		attribute.String(otel.AttributeOrderQuantity, marketOrder.Quantity().String()),
-		attribute.String(otel.AttributeOrderPrice, marketOrder.Price().String()),
-	)
+	if span != nil {
+		otel.AddAttributes(span,
+			attribute.String(otel.AttributeOrderID, marketOrder.ID()),
+			attribute.String(otel.AttributeOrderSide, marketOrder.Side().String()),
+			attribute.String(otel.AttributeOrderType, string(marketOrder.OrderType())),
+			attribute.String(otel.AttributeOrderQuantity, marketOrder.Quantity().String()),
+			attribute.String(otel.AttributeOrderPrice, marketOrder.Price().String()),
+		)
+	}
 
 	quantity := marketOrder.Quantity()
 
 	if quantity.LessThanOrEqual(fpdecimal.Zero) {
-		span.SetStatus(codes.Error, "invalid quantity")
+		if span != nil {
+			span.SetStatus(codes.Error, "invalid quantity")
+		}
 		return nil, ErrInvalidQuantity
 	}
 
@@ -365,16 +375,20 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 	defer span.End()
 
 	// Add order attributes to span
-	otel.AddAttributes(span,
-		attribute.String(otel.AttributeOrderID, limitOrder.ID()),
-		attribute.String(otel.AttributeOrderSide, limitOrder.Side().String()),
-		attribute.String(otel.AttributeOrderType, string(limitOrder.OrderType())),
-		attribute.String(otel.AttributeOrderQuantity, limitOrder.Quantity().String()),
-		attribute.String(otel.AttributeOrderPrice, limitOrder.Price().String()),
-	)
+	if span != nil {
+		otel.AddAttributes(span,
+			attribute.String(otel.AttributeOrderID, limitOrder.ID()),
+			attribute.String(otel.AttributeOrderSide, limitOrder.Side().String()),
+			attribute.String(otel.AttributeOrderType, string(limitOrder.OrderType())),
+			attribute.String(otel.AttributeOrderQuantity, limitOrder.Quantity().String()),
+			attribute.String(otel.AttributeOrderPrice, limitOrder.Price().String()),
+		)
+	}
 
 	if !limitOrder.IsLimitOrder() {
-		span.SetStatus(codes.Error, "invalid argument: not a limit order")
+		if span != nil {
+			span.SetStatus(codes.Error, "invalid argument: not a limit order")
+		}
 		return nil, ErrInvalidArgument
 	}
 
@@ -385,7 +399,9 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 			// The order has been converted from stop to limit, allow processing
 			log.Printf("Order %s has been converted from stop to limit\n", limitOrder.ID())
 		} else {
-			span.SetStatus(codes.Error, "order already exists")
+			if span != nil {
+				span.SetStatus(codes.Error, "order already exists")
+			}
 			return nil, ErrOrderExists
 		}
 	}
@@ -395,7 +411,9 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 	// Store the limit order
 	err := ob.backend.StoreOrder(limitOrder)
 	if err != nil {
-		span.SetStatus(codes.Error, "failed to store limit order")
+		if span != nil {
+			span.SetStatus(codes.Error, "failed to store limit order")
+		}
 		return nil, fmt.Errorf("error storing limit order: %w", err)
 	}
 
@@ -1014,15 +1032,21 @@ func sendToKafka(ctx context.Context, done *Done) {
 	// Convert to message format
 	msg := done.ToMessagingDoneMessage()
 	if msg == nil {
-		span.SetStatus(codes.Error, "failed to convert order to message format")
+		if span != nil {
+			span.SetStatus(codes.Error, "failed to convert order to message format")
+		}
 		return
 	}
 
 	// Send to queue
 	if err := queue.SendMessage(ctx, msg); err != nil {
-		span.SetStatus(codes.Error, fmt.Sprintf("failed to send order message: %v", err))
+		if span != nil {
+			span.SetStatus(codes.Error, fmt.Sprintf("failed to send order message: %v", err))
+		}
 		return
 	}
 
-	span.SetStatus(codes.Ok, "order message sent successfully")
+	if span != nil {
+		span.SetStatus(codes.Ok, "order message sent successfully")
+	}
 }
