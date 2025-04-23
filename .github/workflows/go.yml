@@ -41,10 +41,12 @@ jobs:
           - 9092:9092
         env:
           KAFKA_BROKER_ID: 1
-          KAFKA_LISTENERS: PLAINTEXT://:9092
+          KAFKA_CFG_PROCESS_ROLES: broker
+          KAFKA_CFG_NODE_ID: 1
+          KAFKA_CFG_LISTENERS: PLAINTEXT://:9092
+          KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
           KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
           KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-          KAFKA_CFG_KAFKA_ENABLE_KRAFT: "no"
         options: >-
           --health-cmd="kafka-topics.sh --bootstrap-server localhost:9092 --list"
           --health-interval=10s
