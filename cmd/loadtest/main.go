@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/HdrHistogram/hdrhistogram-go"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -89,6 +91,42 @@ func main() {
 	var wg sync.WaitGroup
 	errChan := make(chan error, numWorkers*ordersPerWorker)
 
+	// Metrics: HDR histogram recorder and atomic counters
+	recorder := hdrhistogram.NewRecorder(1, 10_000_000, 3) // value in microseconds
+	var reqCount, errCount int64
+
+	// Reporter: log interval metrics every 30s using histogram
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// swap counters
+				count := atomic.SwapInt64(&reqCount, 0)
+				errs := atomic.SwapInt64(&errCount, 0)
+
+				if count == 0 {
+					log.Println("Interval metrics: no requests")
+					continue
+				}
+				// snapshot and reset histogram
+				snap := recorder.Histogram()
+				recorder.Reset()
+				// compute percentiles from snapshot
+				p50 := time.Duration(snap.ValueAtQuantile(50.0)) * time.Microsecond
+				p75 := time.Duration(snap.ValueAtQuantile(75.0)) * time.Microsecond
+				p90 := time.Duration(snap.ValueAtQuantile(90.0)) * time.Microsecond
+				p95 := time.Duration(snap.ValueAtQuantile(95.0)) * time.Microsecond
+				rps := float64(count) / 30.0
+				log.Printf("Interval metrics: requests=%d, errors=%d, rps=%.2f, p50=%v, p75=%v, p90=%v, p95=%v",
+					count, errs, rps, p50, p75, p90, p95)
+			}
+		}
+	}()
+
 	// Start workers
 	start := time.Now()
 	log.Printf("Starting %d workers, %d orders per worker...", numWorkers, ordersPerWorker)
@@ -99,10 +137,12 @@ func main() {
 			defer wg.Done()
 			for j := 0; j < ordersPerWorker; j++ {
 				if err := limiter.Wait(ctx); err != nil {
+					atomic.AddInt64(&reqCount, 1)
+					atomic.AddInt64(&errCount, 1)
 					errChan <- fmt.Errorf("rate limiter error: %v", err)
 					return
 				}
-
+				startReq := time.Now()
 				order := generateRandomOrder(bookName, workerID*ordersPerWorker+j)
 				_, err := client.CreateOrder(ctx, &pb.CreateOrderRequest{
 					OrderBookName: order.OrderBookName,
@@ -113,6 +153,13 @@ func main() {
 					OrderType:     order.OrderType,
 					TimeInForce:   pb.TimeInForce_GTC,
 				})
+				// record metrics
+				latency := time.Since(startReq)
+				recorder.RecordValue(latency.Microseconds())
+				atomic.AddInt64(&reqCount, 1)
+				if err != nil {
+					atomic.AddInt64(&errCount, 1)
+				}
 				if err != nil {
 					errChan <- fmt.Errorf("failed to create order: %v", err)
 					continue
