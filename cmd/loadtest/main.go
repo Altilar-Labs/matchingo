@@ -8,41 +8,57 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/dustin/go-humanize"
 	pb "github.com/erain9/matchingo/pkg/api/proto"
 )
 
 const (
-	numWorkers        = 100
-	ordersPerWorker   = 100000
-	maxConcurrentReqs = 80000
+	numWorkers      = 200
+	ordersPerWorker = 10000
+	numConnections  = 20
+	reportInterval  = time.Second
 )
 
 func main() {
 	grpcAddr := flag.String("grpc-addr", "localhost:50051", "gRPC server address")
 	flag.Parse()
 
-	var conns []*grpc.ClientConn
+	// Create gRPC connections
 	var clients []pb.OrderBookServiceClient
-	numConns := 20
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		// Add performance optimizations
+		grpc.WithInitialWindowSize(1 << 24),     // 16MB
+		grpc.WithInitialConnWindowSize(1 << 24), // 16MB
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallSendMsgSize(1024*1024), // 1MB
+			grpc.MaxCallRecvMsgSize(1024*1024), // 1MB
+		),
+		grpc.WithWriteBufferSize(64 * 1024), // 64KB
+		grpc.WithReadBufferSize(64 * 1024),  // 64KB
+	}
 
-	for i := 0; i < numConns; i++ {
-		conn, err := grpc.Dial(*grpcAddr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(100*1024*1024)),
-		)
+	log.Printf("Creating %d gRPC connections...", numConnections)
+	for i := 0; i < numConnections; i++ {
+		conn, err := grpc.Dial(*grpcAddr, opts...)
 		if err != nil {
-			log.Fatalf("Failed to connect: %v", err)
+			log.Fatalf("Failed to create connection %d: %v", i, err)
 		}
 		defer conn.Close()
-		conns = append(conns, conn)
 		clients = append(clients, pb.NewOrderBookServiceClient(conn))
 	}
 
@@ -58,64 +74,71 @@ func main() {
 		cancel()
 	}()
 
-	// Ensure clean state for test order book
-	bookName := "load-test-order-book"
-	log.Printf("Checking for existing order book: %s", bookName)
-	_, err := clients[0].GetOrderBook(ctx, &pb.GetOrderBookRequest{Name: bookName})
-	if err == nil {
-		// Order book exists, delete it first
-		log.Printf("Order book '%s' found, deleting it...", bookName)
-		_, err = clients[0].DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{Name: bookName})
-		if err != nil {
-			log.Fatalf("Failed to delete existing order book '%s': %v", bookName, err)
-		}
-		log.Printf("Successfully deleted existing order book: %s", bookName)
-	} else {
-		// Check if the error is 'NotFound'
-		st, ok := status.FromError(err)
-		if !ok || st.Code() != codes.NotFound {
-			// Unexpected error during GetOrderBook
-			log.Fatalf("Failed to check for order book '%s': %v", bookName, err)
-		}
-		// Order book does not exist, which is fine
-		log.Printf("Order book '%s' not found, proceeding to create.", bookName)
-	}
-
 	// Create test order book
-	log.Printf("Creating order book: %s", bookName)
-	_, err = clients[0].CreateOrderBook(ctx, &pb.CreateOrderBookRequest{
+	bookName := "load-test-order-book"
+	_, err := clients[0].CreateOrderBook(ctx, &pb.CreateOrderBookRequest{
 		Name:        bookName,
 		BackendType: pb.BackendType_MEMORY,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create order book '%s': %v", bookName, err)
+		if st, ok := status.FromError(err); ok && st.Code() == codes.AlreadyExists {
+			log.Printf("Order book already exists, continuing...")
+		} else {
+			log.Fatalf("Failed to create order book: %v", err)
+		}
 	}
-	log.Printf("Successfully created order book: %s", bookName)
 
-	// Set up rate limiter and wait group
-	limiter := rate.NewLimiter(rate.Limit(maxConcurrentReqs), maxConcurrentReqs)
-	var wg sync.WaitGroup
-	errChan := make(chan error, numWorkers*ordersPerWorker)
+	var (
+		completedOrders uint64
+		errorCount      uint64
+		wg              sync.WaitGroup
+	)
+
+	// Start metrics reporting
+	go func() {
+		ticker := time.NewTicker(reportInterval)
+		defer ticker.Stop()
+		lastCount := uint64(0)
+		lastTime := time.Now()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				current := atomic.LoadUint64(&completedOrders)
+				errors := atomic.LoadUint64(&errorCount)
+				throughput := float64(current-lastCount) / now.Sub(lastTime).Seconds()
+
+				log.Printf("Throughput: %s ops/sec | Total: %s | Errors: %s",
+					humanize.Comma(int64(throughput)),
+					humanize.Comma(int64(current)),
+					humanize.Comma(int64(errors)))
+
+				lastCount = current
+				lastTime = now
+			}
+		}
+	}()
 
 	// Start workers
 	start := time.Now()
-	log.Printf("Starting %d workers, %d orders per worker...", numWorkers, ordersPerWorker)
+	log.Printf("Starting %d workers...", numWorkers)
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			// Each worker uses a different connection round-robin
-			client := clients[workerID%numConns]
 
+			// Each worker uses a dedicated connection in round-robin
+			client := clients[workerID%len(clients)]
+
+			// Pre-generate orders for this worker
+			orders := make([]*pb.CreateOrderRequest, ordersPerWorker)
 			for j := 0; j < ordersPerWorker; j++ {
-				if err := limiter.Wait(ctx); err != nil {
-					errChan <- fmt.Errorf("rate limiter error: %v", err)
-					return
-				}
-
 				order := generateRandomOrder(bookName, workerID*ordersPerWorker+j)
-				_, err := client.CreateOrder(ctx, &pb.CreateOrderRequest{
+				orders[j] = &pb.CreateOrderRequest{
 					OrderBookName: order.OrderBookName,
 					OrderId:       order.OrderId,
 					Side:          order.Side,
@@ -123,12 +146,21 @@ func main() {
 					Price:         order.Price,
 					OrderType:     order.OrderType,
 					TimeInForce:   pb.TimeInForce_GTC,
-				})
+				}
+			}
 
+			// Send orders with minimal overhead
+			for j := 0; j < ordersPerWorker; j++ {
+				if ctx.Err() != nil {
+					return
+				}
+
+				_, err := client.CreateOrder(ctx, orders[j])
 				if err != nil {
-					errChan <- fmt.Errorf("failed to create order: %v", err)
+					atomic.AddUint64(&errorCount, 1)
 					continue
 				}
+				atomic.AddUint64(&completedOrders, 1)
 			}
 		}(i)
 	}
@@ -136,32 +168,21 @@ func main() {
 	// Wait for all workers to finish
 	wg.Wait()
 	duration := time.Since(start)
-	close(errChan)
 
-	// Process errors
-	var errors []error
-	for err := range errChan {
-		errors = append(errors, err)
-	}
+	// Print final results
+	totalOrders := atomic.LoadUint64(&completedOrders)
+	totalErrors := atomic.LoadUint64(&errorCount)
+	averageOPS := float64(totalOrders) / duration.Seconds()
 
-	// Print results
-	log.Printf("Load test completed in %v", duration)
-	log.Printf("Total orders attempted: %d", numWorkers*ordersPerWorker)
-	log.Printf("Errors encountered: %d", len(errors))
+	log.Printf("\nLoad test completed in %v", duration)
+	log.Printf("Total orders completed: %s", humanize.Comma(int64(totalOrders)))
+	log.Printf("Average throughput: %s orders/sec", humanize.Comma(int64(averageOPS)))
+	log.Printf("Total errors: %s", humanize.Comma(int64(totalErrors)))
 
-	// Clean up order book
-	_, err = clients[0].DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{
-		Name: bookName,
-	})
+	// Clean up
+	_, err = clients[0].DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{Name: bookName})
 	if err != nil {
 		log.Printf("Failed to delete order book: %v", err)
-	} else {
-		log.Printf("Successfully deleted order book: %s", bookName)
-	}
-
-	if len(errors) > 0 {
-		log.Printf("First error: %v", errors[0])
-		os.Exit(1)
 	}
 }
 
@@ -172,18 +193,12 @@ func generateRandomOrder(bookName string, orderNum int) *pb.OrderResponse {
 		side = pb.OrderSide_SELL
 	}
 
-	// Use fixed price and quantity for maximum matching probability
-	const (
-		fixedPrice    = "100.00"
-		fixedQuantity = "10.00"
-	)
-
 	return &pb.OrderResponse{
 		OrderId:       fmt.Sprintf("order-%d", orderNum),
 		OrderBookName: bookName,
 		Side:          side,
-		Price:         fixedPrice,
-		Quantity:      fixedQuantity,
+		Price:         "100.00",
+		Quantity:      "10.00",
 		OrderType:     pb.OrderType_LIMIT,
 	}
 }
