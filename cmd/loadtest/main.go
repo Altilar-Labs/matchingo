@@ -92,7 +92,9 @@ func main() {
 	errChan := make(chan error, numWorkers*ordersPerWorker)
 
 	// Metrics: HDR histogram recorder and atomic counters
-	recorder := hdrhistogram.NewRecorder(1, 10_000_000, 3) // value in microseconds
+	// hdrhistogram.Histogram is not thread-safe, so we protect it with a mutex
+	hist := hdrhistogram.New(1, 10_000_000, 3) // value in microseconds
+	var histMu sync.Mutex // guards hist
 	var reqCount, errCount int64
 
 	// Reporter: log interval metrics every 30s using histogram
@@ -113,8 +115,11 @@ func main() {
 					continue
 				}
 				// snapshot and reset histogram
-				snap := recorder.Histogram()
-				recorder.Reset()
+				histMu.Lock()
+				snap := hdrhistogram.New(1, 10_000_000, 3)
+				snap.Merge(hist)
+				hist.Reset()
+				histMu.Unlock()
 				// compute percentiles from snapshot
 				p50 := time.Duration(snap.ValueAtQuantile(50.0)) * time.Microsecond
 				p75 := time.Duration(snap.ValueAtQuantile(75.0)) * time.Microsecond
@@ -155,7 +160,9 @@ func main() {
 				})
 				// record metrics
 				latency := time.Since(startReq)
-				recorder.RecordValue(latency.Microseconds())
+				histMu.Lock()
+				hist.RecordValue(latency.Microseconds())
+				histMu.Unlock()
 				atomic.AddInt64(&reqCount, 1)
 				if err != nil {
 					atomic.AddInt64(&errCount, 1)
