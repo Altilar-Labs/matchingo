@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -122,9 +123,28 @@ func main() {
 func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.OrderBookManager) (*grpc.Server, error) {
 	logger := zerolog.Ctx(ctx)
 
-	// Start gRPC server
+	// Optimize system limits
+	if err := setSystemLimits(); err != nil {
+		logger.Warn().Err(err).Msg("Failed to set system limits")
+	}
+
+	// Start gRPC server with TCP optimizations
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				// Increase socket buffer sizes
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 1024*1024)
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 1024*1024)
+				// Enable TCP keepalive
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
+				// Enable TCP_NODELAY
+				syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_NODELAY, 1)
+			})
+		},
+	}
+
 	grpcAddr := cfg.Server.GRPCAddr
-	lis, err := net.Listen("tcp", grpcAddr)
+	lis, err := lc.Listen(ctx, "tcp", grpcAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
@@ -141,13 +161,12 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 	}
 
 	// Configure OpenTelemetry interceptor options for gRPC spans
-	// All gRPC automatic spans will use the order service
 	otelOpts := []otelgrpc.Option{
 		otelgrpc.WithTracerProvider(otel.GetTracerProvider(otel.ServiceOrder)),
 		otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
 	}
 
-	// Create gRPC server with the order book service and interceptors
+	// Create gRPC server with optimized settings
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			otelgrpc.UnaryServerInterceptor(otelOpts...),
@@ -157,40 +176,58 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 			otelgrpc.StreamServerInterceptor(otelOpts...),
 			metricsStreamInterceptor,
 		),
-		// Add performance optimizations
-		grpc.MaxConcurrentStreams(100000),
-		grpc.MaxRecvMsgSize(100*1024*1024),  // 100MB
-		grpc.MaxSendMsgSize(100*1024*1024),  // 100MB
-		grpc.WriteBufferSize(64*1024),       // 64KB
-		grpc.ReadBufferSize(64*1024),        // 64KB
-		grpc.InitialConnWindowSize(64*1024), // 64KB
-		grpc.InitialWindowSize(64*1024),     // 64KB
+		// Optimize for high throughput
+		grpc.MaxConcurrentStreams(200000),
+		grpc.MaxRecvMsgSize(100*1024*1024),
+		grpc.MaxSendMsgSize(100*1024*1024),
+		grpc.WriteBufferSize(256*1024),
+		grpc.ReadBufferSize(256*1024),
+		grpc.InitialConnWindowSize(1024*1024),
+		grpc.InitialWindowSize(1024*1024),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionIdle:     time.Minute,
-			MaxConnectionAge:      time.Hour,
-			MaxConnectionAgeGrace: time.Minute,
-			Time:                  time.Second * 10,
-			Timeout:               time.Second * 5,
+			MaxConnectionIdle:     time.Minute * 5,
+			MaxConnectionAge:      time.Hour * 2,
+			MaxConnectionAgeGrace: time.Minute * 5,
+			Time:                  time.Second * 20,
+			Timeout:               time.Second * 10,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             time.Second * 5,
+			MinTime:             time.Second * 10,
 			PermitWithoutStream: true,
 		}),
 	)
+
+	// Create order book service with optimized settings
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)
-
-	// Enable reflection for tools like grpcurl
 	reflection.Register(grpcServer)
 
-	// Start gRPC server in a goroutine
-	go func() {
-		logger.Info().Str("addr", grpcAddr).Msg("Starting gRPC server")
-		if err := grpcServer.Serve(lis); err != nil {
-			logger.Fatal().Err(err).Msg("Failed to serve gRPC")
-		}
-	}()
+	// Start server with multiple worker goroutines
+	numCPU := runtime.NumCPU()
+	for i := 0; i < numCPU; i++ {
+		go func() {
+			if err := grpcServer.Serve(lis); err != nil {
+				logger.Error().Err(err).Msg("Failed to serve gRPC")
+			}
+		}()
+	}
+
+	logger.Info().
+		Int("num_cpus", numCPU).
+		Str("addr", grpcAddr).
+		Msg("Starting gRPC server with multiple workers")
+
 	return grpcServer, nil
+}
+
+// setSystemLimits attempts to increase system resource limits
+func setSystemLimits() error {
+	var rLimit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err != nil {
+		return err
+	}
+	rLimit.Cur = rLimit.Max
+	return syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 }
 
 // setupHTTPServer initializes and starts an HTTP server
