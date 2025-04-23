@@ -20,26 +20,32 @@ import (
 )
 
 const (
-	numWorkers        = 1000
-	ordersPerWorker   = 10000
-	maxConcurrentReqs = 20000
+	numWorkers        = 100
+	ordersPerWorker   = 100000
+	maxConcurrentReqs = 40000
 )
 
 func main() {
 	grpcAddr := flag.String("grpc-addr", "localhost:50051", "gRPC server address")
 	flag.Parse()
 
-	// Set up gRPC connection
-	conn, err := grpc.Dial(*grpcAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(100*1024*1024)),
-	)
-	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
+	var conns []*grpc.ClientConn
+	var clients []pb.OrderBookServiceClient
+	numConns := 10
 
-	client := pb.NewOrderBookServiceClient(conn)
+	for i := 0; i < numConns; i++ {
+		conn, err := grpc.Dial(*grpcAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(100*1024*1024)),
+		)
+		if err != nil {
+			log.Fatalf("Failed to connect: %v", err)
+		}
+		defer conn.Close()
+		conns = append(conns, conn)
+		clients = append(clients, pb.NewOrderBookServiceClient(conn))
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -55,11 +61,11 @@ func main() {
 	// Ensure clean state for test order book
 	bookName := "load-test-order-book"
 	log.Printf("Checking for existing order book: %s", bookName)
-	_, err = client.GetOrderBook(ctx, &pb.GetOrderBookRequest{Name: bookName})
+	_, err := clients[0].GetOrderBook(ctx, &pb.GetOrderBookRequest{Name: bookName})
 	if err == nil {
 		// Order book exists, delete it first
 		log.Printf("Order book '%s' found, deleting it...", bookName)
-		_, err = client.DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{Name: bookName})
+		_, err = clients[0].DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{Name: bookName})
 		if err != nil {
 			log.Fatalf("Failed to delete existing order book '%s': %v", bookName, err)
 		}
@@ -77,7 +83,7 @@ func main() {
 
 	// Create test order book
 	log.Printf("Creating order book: %s", bookName)
-	_, err = client.CreateOrderBook(ctx, &pb.CreateOrderBookRequest{
+	_, err = clients[0].CreateOrderBook(ctx, &pb.CreateOrderBookRequest{
 		Name:        bookName,
 		BackendType: pb.BackendType_MEMORY,
 	})
@@ -99,6 +105,9 @@ func main() {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
+			// Each worker uses a different connection round-robin
+			client := clients[workerID%numConns]
+
 			for j := 0; j < ordersPerWorker; j++ {
 				if err := limiter.Wait(ctx); err != nil {
 					errChan <- fmt.Errorf("rate limiter error: %v", err)
@@ -115,6 +124,7 @@ func main() {
 					OrderType:     order.OrderType,
 					TimeInForce:   pb.TimeInForce_GTC,
 				})
+
 				if err != nil {
 					errChan <- fmt.Errorf("failed to create order: %v", err)
 					continue
@@ -140,7 +150,7 @@ func main() {
 	log.Printf("Errors encountered: %d", len(errors))
 
 	// Clean up order book
-	_, err = client.DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{
+	_, err = clients[0].DeleteOrderBook(ctx, &pb.DeleteOrderBookRequest{
 		Name: bookName,
 	})
 	if err != nil {
