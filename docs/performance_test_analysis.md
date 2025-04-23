@@ -17,6 +17,7 @@ The test executes the following steps:
     *   Sets up signal handling for graceful shutdown on interrupt (Ctrl+C).
     *   Initializes a rate limiter (`rate.Limiter`) to control concurrency (`maxConcurrentReqs`, default 100).
     *   Initializes a wait group (`sync.WaitGroup`) and an error channel.
+    *   **Initializes a thread-safe HDR histogram and atomic counters for real-time metrics.**
 3.  **Load Generation Loop:**
     *   Records the start time.
     *   Starts a configurable number of worker goroutines (`numWorkers`, default 10000).
@@ -24,6 +25,7 @@ The test executes the following steps:
         *   Waits for the rate limiter to allow the next request.
         *   Calls `generateOrder` to create the order details.
         *   Sends the order using the `CreateOrder` gRPC call.
+        *   **Records the latency of each request into the shared HDR histogram (protected by a mutex for thread safety).**
         *   Collects any errors from `CreateOrder` into the error channel.
 4.  **Synchronization and Reporting:**
     *   Waits for all worker goroutines to complete using the wait group.
@@ -31,10 +33,35 @@ The test executes the following steps:
     *   Closes and drains the error channel, collecting all errors.
     *   Logs the total number of orders attempted (`numWorkers` * `ordersPerWorker`).
     *   Logs the total count of errors encountered during order submission.
+    *   **Logs real-time interval metrics every 30 seconds, including request count, error count, requests per second (RPS), and latency percentiles (p50, p75, p90, p95) calculated from the HDR histogram.**
 5.  **Cleanup:**
     *   Deletes the `load-test-order-book` using the `DeleteOrderBook` RPC.
     *   Logs success or failure of the cleanup.
     *   Exits with status 1 if any errors occurred during the load generation phase, 0 otherwise.
+
+---
+
+## Observability and Real-Time Metrics
+
+The load test now features enhanced observability:
+
+- **Latency Measurement:**
+  - Uses a single `hdrhistogram.Histogram` (from `github.com/HdrHistogram/hdrhistogram-go`) to record per-request latencies (in microseconds).
+  - The histogram is protected by a `sync.Mutex` to ensure thread safety across concurrent goroutines.
+  - Each worker records the latency of every order submission.
+
+- **Interval Metrics Logging:**
+  - A background goroutine logs interval metrics every 30 seconds during the test run.
+  - Metrics include:
+    - Number of requests and errors in the interval
+    - Requests per second (RPS)
+    - Latency percentiles: p50, p75, p90, p95 (computed from a snapshot of the histogram)
+  - After each interval, the histogram is reset for the next interval, ensuring metrics reflect recent activity.
+
+- **Thread Safety:**
+  - All accesses to the shared histogram are guarded by a mutex to avoid race conditions.
+
+This approach provides real-time visibility into system performance under load, helping to quickly identify bottlenecks and regressions.
 
 ## Order Generation (`generateOrder` function)
 

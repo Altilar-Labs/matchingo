@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.24.2
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.1.2
 	github.com/IBM/sarama v1.45.1
 	github.com/fatih/color v1.18.0
 	github.com/go-redis/redis/v8 v8.11.5
