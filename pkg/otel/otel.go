@@ -260,3 +260,18 @@ func GetTracerProvider(serviceName string) trace.TracerProvider {
 func GetTextMapPropagator() propagation.TextMapPropagator {
 	return otel.GetTextMapPropagator()
 }
+
+// ResetForTesting resets the global variables for testing
+func ResetForTesting() {
+	orderServiceTracer = nil
+	matchingEngineTracer = nil
+	orderTracerProvider = nil
+	matchingTracerProvider = nil
+}
+
+// InitForTesting initializes the tracers for testing
+func InitForTesting(tracer trace.Tracer) error {
+	orderServiceTracer = tracer
+	matchingEngineTracer = tracer
+	return nil
+}

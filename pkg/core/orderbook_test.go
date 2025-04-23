@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -250,7 +251,7 @@ func TestMarketOrderExecution(t *testing.T) {
 	require.NotNil(t, sellOrder)
 
 	// Process the sell order
-	_, err = book.Process(sellOrder)
+	_, err = book.Process(context.Background(), sellOrder)
 	require.NoError(t, err, "Expected no error when processing sell order")
 
 	// Create a buy market order
@@ -261,7 +262,7 @@ func TestMarketOrderExecution(t *testing.T) {
 	require.NotNil(t, buyOrder)
 
 	// Process the buy order
-	done, err := book.Process(buyOrder)
+	done, err := book.Process(context.Background(), buyOrder)
 	require.NoError(t, err, "Expected no error when processing buy order")
 	require.NotNil(t, done)
 
@@ -295,7 +296,7 @@ func TestLimitOrderMatching(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the sell order
-	_, err = book.Process(sellOrder)
+	_, err = book.Process(context.Background(), sellOrder)
 	if err != nil {
 		t.Errorf("Expected no error when processing sell order, got %v", err)
 	}
@@ -308,7 +309,7 @@ func TestLimitOrderMatching(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buyOrder)
+	done, err := book.Process(context.Background(), buyOrder)
 	if err != nil {
 		t.Errorf("Expected no error when processing buy order, got %v", err)
 	}
@@ -344,15 +345,15 @@ func TestCompleteOrderExecution(t *testing.T) {
 	require.NoError(t, err2)
 
 	// Process sell orders
-	book.Process(sell1)
-	book.Process(sell2)
+	book.Process(context.Background(), sell1)
+	book.Process(context.Background(), sell2)
 
 	// Create a buy limit order that matches both sells completely
 	buy, err := NewLimitOrder("buy-1", Buy, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(11.0), GTC, "", "test_user")
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buy)
+	done, err := book.Process(context.Background(), buy)
 	if err != nil {
 		t.Errorf("Expected no error when processing buy order, got %v", err)
 	}
@@ -387,7 +388,7 @@ func TestPartialFillAndBookInsertion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process sell order
-	_, err = book.Process(sell)
+	_, err = book.Process(context.Background(), sell)
 	require.NoError(t, err)
 
 	// Create a larger buy limit order
@@ -395,7 +396,7 @@ func TestPartialFillAndBookInsertion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order - should partially fill and be inserted into the book
-	done, err := book.Process(buy)
+	done, err := book.Process(context.Background(), buy)
 	if err != nil {
 		t.Errorf("Expected no error when processing buy order, got %v", err)
 	}
@@ -447,11 +448,11 @@ func TestPriceTimeOrderPriority(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process sell orders
-	_, err = book.Process(sell1)
+	_, err = book.Process(context.Background(), sell1)
 	require.NoError(t, err)
-	_, err = book.Process(sell2)
+	_, err = book.Process(context.Background(), sell2)
 	require.NoError(t, err)
-	_, err = book.Process(sell3)
+	_, err = book.Process(context.Background(), sell3)
 	require.NoError(t, err)
 
 	// Create a buy market order to match against the best prices
@@ -459,7 +460,7 @@ func TestPriceTimeOrderPriority(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buy)
+	done, err := book.Process(context.Background(), buy)
 	if err != nil {
 		t.Errorf("Expected no error when processing buy order, got %v", err)
 	}
@@ -510,9 +511,9 @@ func TestMarketOrderFullExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process sell orders
-	_, err = book.Process(sell1)
+	_, err = book.Process(context.Background(), sell1)
 	require.NoError(t, err)
-	_, err = book.Process(sell2)
+	_, err = book.Process(context.Background(), sell2)
 	require.NoError(t, err)
 
 	// Create a buy market order
@@ -520,7 +521,7 @@ func TestMarketOrderFullExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buy)
+	done, err := book.Process(context.Background(), buy)
 	if err != nil {
 		t.Errorf("Expected no error when processing buy order, got %v", err)
 	}
@@ -555,11 +556,11 @@ func TestCalculateMarketPrice(t *testing.T) {
 	// Add some sell orders
 	sell1, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sell1)
+	_, err = book.Process(context.Background(), sell1)
 	require.NoError(t, err)
 	sell2, err := NewLimitOrder("sell-2", Sell, fpdecimal.FromFloat(2.0), fpdecimal.FromFloat(11.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sell2)
+	_, err = book.Process(context.Background(), sell2)
 	require.NoError(t, err)
 
 	// Calculate market price for buy order
@@ -598,7 +599,7 @@ func BenchmarkOrderMatching(b *testing.B) {
 			"",
 			"test_user")
 		require.NoError(b, err)
-		_, err = book.Process(sellOrder)
+		_, err = book.Process(context.Background(), sellOrder)
 		require.NoError(b, err)
 	}
 
@@ -608,7 +609,7 @@ func BenchmarkOrderMatching(b *testing.B) {
 		// Create and process a buy market order
 		buy, err := NewMarketOrder("buy-bench", Buy, fpdecimal.FromFloat(5.0), "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(buy)
+		_, err = book.Process(context.Background(), buy)
 		require.NoError(b, err)
 
 		// Refill the book for the next iteration
@@ -623,7 +624,7 @@ func BenchmarkOrderMatching(b *testing.B) {
 				"",
 				"test_user")
 			require.NoError(b, err)
-			_, err = book.Process(sellOrder)
+			_, err = book.Process(context.Background(), sellOrder)
 			require.NoError(b, err)
 		}
 	}
@@ -642,7 +643,7 @@ func TestStopOrder(t *testing.T) {
 	require.NotNil(t, stopOrder)
 
 	// Process the stop order (should be added but not executed)
-	_, err = book.Process(stopOrder)
+	_, err = book.Process(context.Background(), stopOrder)
 	require.NoError(t, err)
 
 	// Verify stop order is in the stop book
@@ -660,7 +661,7 @@ func TestStopOrder(t *testing.T) {
 	// First add a matching buy limit order to ensure the market sell can execute
 	matchBuyOrder, err := NewLimitOrder("match-buy-1", Buy, fpdecimal.FromFloat(1.0), fpdecimal.FromFloat(105.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(matchBuyOrder)
+	_, err = book.Process(context.Background(), matchBuyOrder)
 	require.NoError(t, err)
 
 	// Create a market order to trigger the stop price
@@ -669,7 +670,7 @@ func TestStopOrder(t *testing.T) {
 	require.NotNil(t, triggerOrder)
 
 	// Process the market order, this should trigger the stop order
-	done, err := book.Process(triggerOrder)
+	done, err := book.Process(context.Background(), triggerOrder)
 	require.NoError(t, err)
 
 	// Debug: Print details about the market order execution
@@ -700,25 +701,25 @@ func TestIOCOrder(t *testing.T) {
 	require.NoError(t, err4)
 
 	// Process sell order
-	_, err := book.Process(sell1)
+	_, err := book.Process(context.Background(), sell1)
 	require.NoError(t, err)
 
 	// Process IOC Buy 1 (partial fill)
-	done1, err := book.Process(iocBuy1)
+	done1, err := book.Process(context.Background(), iocBuy1)
 	require.NoError(t, err)
 	assert.Equal(t, fpdecimal.FromInt(5), done1.Processed)
 	assert.Equal(t, fpdecimal.Zero, done1.Left)
 	assert.Equal(t, 2, len(done1.Trades)) // 1 taker + 1 maker match
 
 	// Process IOC Buy 2 (fills remaining sell1, rest canceled)
-	done2, err := book.Process(iocBuy2)
+	done2, err := book.Process(context.Background(), iocBuy2)
 	require.NoError(t, err)
 	assert.Equal(t, fpdecimal.FromInt(5), done2.Processed) // Only 5 left from sell1
 	assert.Equal(t, fpdecimal.FromInt(10), done2.Left)     // 15 - 5 = 10 left/canceled
 	assert.Equal(t, 2, len(done2.Trades))                  // 1 taker + 1 maker match
 
 	// Process IOC Buy 3 (no match, fully canceled)
-	done3, err := book.Process(iocBuy3)
+	done3, err := book.Process(context.Background(), iocBuy3)
 	require.NoError(t, err)
 	assert.Equal(t, fpdecimal.Zero, done3.Processed)
 	assert.Equal(t, fpdecimal.FromInt(5), done3.Left)
@@ -738,11 +739,11 @@ func TestFOKLimitOrder(t *testing.T) {
 	require.NoError(t, err3)
 
 	// Process sell order
-	_, err := book.Process(sell1)
+	_, err := book.Process(context.Background(), sell1)
 	require.NoError(t, err)
 
 	// Process FOK Buy 1 (Success)
-	done1, err := book.Process(fokBuy1)
+	done1, err := book.Process(context.Background(), fokBuy1)
 	require.NoError(t, err)
 	assert.Equal(t, fpdecimal.FromInt(10), done1.Processed)
 	assert.Equal(t, fpdecimal.Zero, done1.Left)
@@ -754,11 +755,11 @@ func TestFOKLimitOrder(t *testing.T) {
 	// Re-add sell order for next test
 	sell2, err := NewLimitOrder("sell2", Sell, fpdecimal.FromInt(10), fpdecimal.FromInt(100), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sell2)
+	_, err = book.Process(context.Background(), sell2)
 	require.NoError(t, err)
 
 	// Process FOK Buy 2 (Fail/Cancel)
-	done2, err := book.Process(fokBuy2)
+	done2, err := book.Process(context.Background(), fokBuy2)
 	require.NoError(t, err)                            // FOK failure isn't an 'error' in Process, it modifies 'done'
 	assert.Equal(t, fpdecimal.Zero, done2.Processed)   // No fill
 	assert.Equal(t, fpdecimal.FromInt(15), done2.Left) // Original quantity left/canceled
@@ -789,7 +790,7 @@ func TestPriceTimePriority(t *testing.T) {
 	}
 
 	for _, order := range sellOrderPtrs {
-		_, err := book.Process(order)
+		_, err := book.Process(context.Background(), order)
 		if err != nil {
 			t.Fatalf("Failed to process setup order %s: %v", order.ID(), err)
 		}
@@ -801,7 +802,7 @@ func TestPriceTimePriority(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buyOrder)
+	done, err := book.Process(context.Background(), buyOrder)
 	if err != nil {
 		t.Fatalf("Expected no error when processing buy order, got %v", err)
 	}
@@ -912,7 +913,7 @@ func TestMultiLevelMatching(t *testing.T) {
 	}
 
 	for _, order := range sellOrderPtrs {
-		_, err := book.Process(order)
+		_, err := book.Process(context.Background(), order)
 		if err != nil {
 			t.Fatalf("Failed to process setup order %s: %v", order.ID(), err)
 		}
@@ -924,7 +925,7 @@ func TestMultiLevelMatching(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy order
-	done, err := book.Process(buyOrder)
+	done, err := book.Process(context.Background(), buyOrder)
 	if err != nil {
 		t.Fatalf("Expected no error when processing buy order, got %v", err)
 	}
@@ -999,7 +1000,7 @@ func TestMarketOrderNoLiquidity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the buy market order
-	done, err := book.Process(buyOrder)
+	done, err := book.Process(context.Background(), buyOrder)
 
 	// --- Verification ---
 
@@ -1050,7 +1051,7 @@ func TestCancelPendingStopOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the stop order (places it in the stop book)
-	_, err = book.Process(stopOrder)
+	_, err = book.Process(context.Background(), stopOrder)
 	if err != nil {
 		t.Fatalf("Failed to process stop order: %v", err)
 	}
@@ -1116,7 +1117,7 @@ func TestDuplicateOrderID(t *testing.T) {
 	// Process the first order
 	order1, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(order1)
+	_, err = book.Process(context.Background(), order1)
 	if err != nil {
 		t.Fatalf("Processing first order failed unexpectedly: %v", err)
 	}
@@ -1129,7 +1130,7 @@ func TestDuplicateOrderID(t *testing.T) {
 	// Process a second order with the same ID
 	order2, err := NewLimitOrder(orderID, Sell, qty, price.Add(fpdecimal.FromInt(1)), GTC, "", "test_user") // Different details but same ID
 	require.NoError(t, err)
-	done, err := book.Process(order2)
+	done, err := book.Process(context.Background(), order2)
 
 	// --- Verification ---
 
@@ -1159,7 +1160,7 @@ func TestLimitOrderToOrderBook(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, order)
 
-	_, err = book.Process(order)
+	_, err = book.Process(context.Background(), order)
 	require.NoError(t, err)
 
 	retrievedOrder := backend.GetOrder(orderID)
@@ -1178,7 +1179,7 @@ func TestProcessFilledOrder(t *testing.T) {
 	order, err := NewLimitOrder(orderID, Buy, qty, price, GTC, "", "test_user")
 	require.NoError(t, err)
 	require.NotNil(t, order)
-	_, err = book.Process(order)
+	_, err = book.Process(context.Background(), order)
 	require.NoError(t, err)
 
 	// Simulate the order being filled by modifying its quantity in the backend
@@ -1192,7 +1193,7 @@ func TestProcessFilledOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sameOrderAgain)
 
-	_, err = book.Process(sameOrderAgain)
+	_, err = book.Process(context.Background(), sameOrderAgain)
 	assert.Error(t, err, "Expected an error when processing an already filled order")
 }
 
@@ -1203,7 +1204,7 @@ func TestIOCMarketOrderPartialFill(t *testing.T) {
 	// Add a sell limit order
 	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sellOrder)
+	_, err = book.Process(context.Background(), sellOrder)
 	require.NoError(t, err)
 
 	// Create an IOC buy market order for more than available
@@ -1211,7 +1212,7 @@ func TestIOCMarketOrderPartialFill(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the IOC buy order
-	done, err := book.Process(iocBuyOrder)
+	done, err := book.Process(context.Background(), iocBuyOrder)
 	require.NoError(t, err)
 	require.NotNil(t, done)
 
@@ -1231,7 +1232,7 @@ func TestFOKLimitOrderFullFill(t *testing.T) {
 	// Add a sell limit order
 	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(5.0), fpdecimal.FromFloat(10.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sellOrder)
+	_, err = book.Process(context.Background(), sellOrder)
 	require.NoError(t, err)
 
 	// Create an FOK buy limit order that can be fully filled
@@ -1241,7 +1242,7 @@ func TestFOKLimitOrderFullFill(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the FOK buy order
-	done, err := book.Process(fokBuyOrder)
+	done, err := book.Process(context.Background(), fokBuyOrder)
 	require.NoError(t, err)
 	require.NotNil(t, done)
 
@@ -1260,7 +1261,7 @@ func TestFOKLimitOrderCancelled(t *testing.T) {
 	// Add a sell limit order
 	sellOrder, err := NewLimitOrder("sell-1", Sell, fpdecimal.FromFloat(3.0), fpdecimal.FromFloat(10.0), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sellOrder)
+	_, err = book.Process(context.Background(), sellOrder)
 	require.NoError(t, err)
 
 	// Create an FOK buy limit order that cannot be fully filled
@@ -1270,7 +1271,7 @@ func TestFOKLimitOrderCancelled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Process the FOK buy order
-	done, err := book.Process(fokBuyOrder)
+	done, err := book.Process(context.Background(), fokBuyOrder)
 	require.NoError(t, err)
 	require.NotNil(t, done)
 
@@ -1295,14 +1296,14 @@ func TestMarketOrderIOC(t *testing.T) {
 	// Create a maker GTC sell order
 	sell, err := NewLimitOrder("sell1", Sell, fpdecimal.FromInt(5), fpdecimal.FromInt(100), GTC, "", "test_user")
 	require.NoError(t, err)
-	_, err = book.Process(sell)
+	_, err = book.Process(context.Background(), sell)
 	require.NoError(t, err)
 
 	// Create a market buy order for larger quantity
 	buy, err := NewMarketOrder("buy1", Buy, fpdecimal.FromInt(10), "test_user")
 	require.NoError(t, err)
 	// Market orders are implicitly IOC
-	done, err := book.Process(buy)
+	done, err := book.Process(context.Background(), buy)
 	require.NoError(t, err)
 
 	// Verify the processed and remaining quantities
