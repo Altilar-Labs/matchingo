@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -156,6 +157,25 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 			otelgrpc.StreamServerInterceptor(otelOpts...),
 			metricsStreamInterceptor,
 		),
+		// Add performance optimizations
+		grpc.MaxConcurrentStreams(100000),
+		grpc.MaxRecvMsgSize(100*1024*1024),  // 100MB
+		grpc.MaxSendMsgSize(100*1024*1024),  // 100MB
+		grpc.WriteBufferSize(64*1024),       // 64KB
+		grpc.ReadBufferSize(64*1024),        // 64KB
+		grpc.InitialConnWindowSize(64*1024), // 64KB
+		grpc.InitialWindowSize(64*1024),     // 64KB
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     time.Minute,
+			MaxConnectionAge:      time.Hour,
+			MaxConnectionAgeGrace: time.Minute,
+			Time:                  time.Second * 10,
+			Timeout:               time.Second * 5,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             time.Second * 5,
+			PermitWithoutStream: true,
+		}),
 	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)

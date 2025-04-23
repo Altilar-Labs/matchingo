@@ -22,17 +22,18 @@ import (
 )
 
 const (
-	numWorkers      = 200
+	numWorkers      = 100 // Reduced from 200 to avoid overwhelming
 	ordersPerWorker = 10000
-	numConnections  = 20
+	numConnections  = 10 // Reduced from 20 for better connection management
 	reportInterval  = time.Second
+	batchSize       = 50 // Reduced batch size for faster processing
 )
 
 func main() {
 	grpcAddr := flag.String("grpc-addr", "localhost:50051", "gRPC server address")
 	flag.Parse()
 
-	// Create gRPC connections
+	// Create gRPC connections with optimized settings
 	var clients []pb.OrderBookServiceClient
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -42,19 +43,22 @@ func main() {
 			PermitWithoutStream: true,
 		}),
 		// Add performance optimizations
-		grpc.WithInitialWindowSize(1 << 24),     // 16MB
-		grpc.WithInitialConnWindowSize(1 << 24), // 16MB
+		grpc.WithInitialWindowSize(64 * 1024),     // 64KB
+		grpc.WithInitialConnWindowSize(64 * 1024), // 64KB
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallSendMsgSize(1024*1024), // 1MB
-			grpc.MaxCallRecvMsgSize(1024*1024), // 1MB
+			grpc.MaxCallSendMsgSize(100*1024*1024), // 100MB
+			grpc.MaxCallRecvMsgSize(100*1024*1024), // 100MB
 		),
 		grpc.WithWriteBufferSize(64 * 1024), // 64KB
 		grpc.WithReadBufferSize(64 * 1024),  // 64KB
+		grpc.WithBlock(),                    // Wait for connections to establish
 	}
 
 	log.Printf("Creating %d gRPC connections...", numConnections)
 	for i := 0; i < numConnections; i++ {
-		conn, err := grpc.Dial(*grpcAddr, opts...)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		conn, err := grpc.DialContext(ctx, *grpcAddr, opts...)
+		cancel()
 		if err != nil {
 			log.Fatalf("Failed to create connection %d: %v", i, err)
 		}
@@ -111,10 +115,23 @@ func main() {
 				errors := atomic.LoadUint64(&errorCount)
 				throughput := float64(current-lastCount) / now.Sub(lastTime).Seconds()
 
-				log.Printf("Throughput: %s ops/sec | Total: %s | Errors: %s",
-					humanize.Comma(int64(throughput)),
-					humanize.Comma(int64(current)),
-					humanize.Comma(int64(errors)))
+				// Get server-side order book status
+				if current > lastCount {
+					status, err := clients[0].GetOrderBook(ctx, &pb.GetOrderBookRequest{Name: bookName})
+					if err == nil {
+						log.Printf("Throughput: %s ops/sec | Client Total: %s | Server Total: %s | Errors: %s",
+							humanize.Comma(int64(throughput)),
+							humanize.Comma(int64(current)),
+							humanize.Comma(int64(status.OrderCount)),
+							humanize.Comma(int64(errors)))
+					} else {
+						log.Printf("Throughput: %s ops/sec | Client Total: %s | Server Status Error: %v | Errors: %s",
+							humanize.Comma(int64(throughput)),
+							humanize.Comma(int64(current)),
+							err,
+							humanize.Comma(int64(errors)))
+					}
+				}
 
 				lastCount = current
 				lastTime = now
@@ -131,10 +148,9 @@ func main() {
 		go func(workerID int) {
 			defer wg.Done()
 
-			// Each worker uses a dedicated connection in round-robin
 			client := clients[workerID%len(clients)]
 
-			// Pre-generate orders for this worker
+			// Pre-generate all orders for this worker
 			orders := make([]*pb.CreateOrderRequest, ordersPerWorker)
 			for j := 0; j < ordersPerWorker; j++ {
 				order := generateRandomOrder(bookName, workerID*ordersPerWorker+j)
@@ -149,18 +165,40 @@ func main() {
 				}
 			}
 
-			// Send orders with minimal overhead
-			for j := 0; j < ordersPerWorker; j++ {
+			// Process orders in batches with adaptive pacing
+			for j := 0; j < ordersPerWorker; j += batchSize {
 				if ctx.Err() != nil {
 					return
 				}
 
-				_, err := client.CreateOrder(ctx, orders[j])
-				if err != nil {
-					atomic.AddUint64(&errorCount, 1)
-					continue
+				end := j + batchSize
+				if end > ordersPerWorker {
+					end = ordersPerWorker
 				}
-				atomic.AddUint64(&completedOrders, 1)
+
+				// Send batch of orders with minimal delay
+				for k := j; k < end; k++ {
+					_, err := client.CreateOrder(ctx, orders[k])
+					if err != nil {
+						atomic.AddUint64(&errorCount, 1)
+						// Add small backoff on error
+						if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+							time.Sleep(time.Millisecond * 100)
+						}
+						continue
+					}
+					atomic.AddUint64(&completedOrders, 1)
+				}
+
+				// Dynamic backoff based on error rate
+				errorRate := float64(atomic.LoadUint64(&errorCount)) / float64(atomic.LoadUint64(&completedOrders)+1)
+				if errorRate > 0.1 {
+					time.Sleep(time.Millisecond * 50)
+				} else if errorRate > 0.05 {
+					time.Sleep(time.Millisecond * 20)
+				} else {
+					time.Sleep(time.Millisecond * 5)
+				}
 			}
 		}(i)
 	}
