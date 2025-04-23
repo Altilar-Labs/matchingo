@@ -286,13 +286,12 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		return nil, status.Errorf(codes.Internal, "failed to create order: %v", err)
 	}
 
-	// Add nil check to prevent panic
+	// Process the order
 	if order == nil {
 		logger.Error().Msg("Order creation returned nil without error")
 		return nil, status.Error(codes.Internal, "order creation failed: nil order")
 	}
 
-	// Process the order
 	done, err = orderBook.Process(ctx, order)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to process order")
@@ -302,6 +301,11 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 		}
 		span.SetStatus(otelcodes.Error, fmt.Sprintf("failed to process order: %v", err))
 		return nil, status.Errorf(codes.Internal, "failed to process order: %v", err)
+	}
+
+	if done == nil {
+		logger.Error().Msg("Order processing returned nil Done object")
+		return nil, status.Error(codes.Internal, "order processing failed: nil Done object")
 	}
 
 	// Create order response
@@ -363,11 +367,15 @@ func (s *GRPCOrderBookService) CreateOrder(ctx context.Context, req *proto.Creat
 
 	// Add response attributes to span
 	otel.AddAttributes(span,
-		attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
-		attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
-		attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
 		attribute.String(otel.AttributeOrderStatus, resp.Status.String()),
 	)
+	if done != nil {
+		otel.AddAttributes(span,
+			attribute.String(otel.AttributeExecutedQuantity, done.Processed.String()),
+			attribute.String(otel.AttributeRemainingQuantity, done.Left.String()),
+			attribute.Int(otel.AttributeTradeCount, len(done.Trades)),
+		)
+	}
 	span.SetStatus(otelcodes.Ok, "order processed successfully")
 
 	return resp, nil

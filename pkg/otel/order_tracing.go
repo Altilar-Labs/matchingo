@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -40,9 +41,11 @@ func StartOrderSpan(ctx context.Context, name string, attrs ...attribute.KeyValu
 		tracer = GetOrderServiceTracer()
 	}
 
+	// Fall back to global tracer provider if service tracer is nil
 	if tracer == nil {
-		return ctx, nil
+		tracer = otel.GetTracerProvider().Tracer("")
 	}
+
 	return tracer.Start(ctx, name, trace.WithAttributes(attrs...))
 }
 

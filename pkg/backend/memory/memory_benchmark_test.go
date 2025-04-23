@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -162,7 +163,7 @@ func BenchmarkOrderBook_Process_Memory(b *testing.B) {
 		quantity := fpdecimal.FromFloat(10.0)
 		order, err := core.NewLimitOrder(orderID, core.Sell, quantity, price, core.GTC, "", "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(order)
+		_, err = book.Process(context.Background(), order)
 		require.NoError(b, err)
 	}
 
@@ -172,7 +173,7 @@ func BenchmarkOrderBook_Process_Memory(b *testing.B) {
 		quantity := fpdecimal.FromFloat(1.0)
 		order, err := core.NewMarketOrder(orderID, core.Buy, quantity, "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(order)
+		_, err = book.Process(context.Background(), order)
 		require.NoError(b, err)
 	}
 }
@@ -189,7 +190,7 @@ func BenchmarkOrderBook_LargeOrderBook_Memory(b *testing.B) {
 		buyQuantity := fpdecimal.FromFloat(10.0)
 		buyOrder, err := core.NewLimitOrder(buyOrderID, core.Buy, buyQuantity, buyPrice, core.GTC, "", "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(buyOrder)
+		_, err = book.Process(context.Background(), buyOrder)
 		require.NoError(b, err)
 
 		// Add sell orders
@@ -198,7 +199,7 @@ func BenchmarkOrderBook_LargeOrderBook_Memory(b *testing.B) {
 		sellQuantity := fpdecimal.FromFloat(10.0)
 		sellOrder, err := core.NewLimitOrder(sellOrderID, core.Sell, sellQuantity, sellPrice, core.GTC, "", "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(sellOrder)
+		_, err = book.Process(context.Background(), sellOrder)
 		require.NoError(b, err)
 	}
 
@@ -209,7 +210,7 @@ func BenchmarkOrderBook_LargeOrderBook_Memory(b *testing.B) {
 		quantity := fpdecimal.FromFloat(5.0)
 		order, err := core.NewMarketOrder(orderID, core.Buy, quantity, "test_user")
 		require.NoError(b, err)
-		_, err = book.Process(order)
+		_, err = book.Process(context.Background(), order)
 		require.NoError(b, err)
 	}
 }
