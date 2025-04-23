@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"os/signal"
 	"sync"
@@ -21,9 +20,9 @@ import (
 )
 
 const (
-	numWorkers        = 10000
-	ordersPerWorker   = 100
-	maxConcurrentReqs = 100
+	numWorkers        = 1000
+	ordersPerWorker   = 10000
+	maxConcurrentReqs = 20000
 )
 
 func main() {
@@ -31,7 +30,10 @@ func main() {
 	flag.Parse()
 
 	// Set up gRPC connection
-	conn, err := grpc.Dial(*grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(*grpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(100*1024*1024)),
+	)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -154,13 +156,13 @@ func main() {
 }
 
 func generateRandomOrder(bookName string, orderNum int) *pb.OrderResponse {
-	r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(orderNum)))
+	// Ensure exact 50-50 distribution of buy/sell orders for maximum matching
 	side := pb.OrderSide_BUY
-	if r.Float64() < 0.5 {
+	if orderNum%2 == 0 {
 		side = pb.OrderSide_SELL
 	}
 
-	// Use fixed price and quantity for higher matching probability
+	// Use fixed price and quantity for maximum matching probability
 	const (
 		fixedPrice    = "100.00"
 		fixedQuantity = "10.00"
