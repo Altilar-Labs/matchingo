@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
@@ -259,6 +260,11 @@ func GetTracerProvider(serviceName string) trace.TracerProvider {
 // GetTextMapPropagator returns the configured propagator
 func GetTextMapPropagator() propagation.TextMapPropagator {
 	return otel.GetTextMapPropagator()
+}
+
+// GetMeterProvider returns the global meter provider
+func GetMeterProvider() metric.MeterProvider {
+	return meterProvider
 }
 
 // ResetForTesting resets the global variables for testing
