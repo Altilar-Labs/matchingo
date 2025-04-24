@@ -245,6 +245,7 @@ func (ob *OrderBook) processMarketOrder(ctx context.Context, marketOrder *Order)
 
 		processedQty := fpdecimal.Zero
 		lastMatchPrice := fpdecimal.Zero
+		matchedOrderCount := int64(0) // Keep track of how many orders were matched
 
 		// Iterate through prices from best to worst
 		for _, price := range prices {
@@ -274,6 +275,7 @@ func (ob *OrderBook) processMarketOrder(ctx context.Context, marketOrder *Order)
 				makerOrder.DecreaseQuantity(matchQty)
 				processedQty = processedQty.Add(matchQty)
 				lastMatchPrice = price
+				matchedOrderCount++ // Increment counter for each matched order
 
 				// Record the trades - use matchQty for both sides
 				done.appendOrder(marketOrder, matchQty, price)
@@ -333,6 +335,12 @@ func (ob *OrderBook) processMarketOrder(ctx context.Context, marketOrder *Order)
 				// Add taker trade
 				done.appendOrder(marketOrder, processedQty, lastMatchPrice)
 			}
+		}
+
+		// Record metrics for matched orders if we had any matches
+		if matchedOrderCount > 0 {
+			metrics := otel.GetOrderBookMetrics()
+			metrics.RecordMatchedOrders(ctx, "market", matchedOrderCount)
 		}
 
 		// Update last trade price for stop orders if a trade occurred
@@ -485,6 +493,7 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 
 		processedQty := fpdecimal.Zero
 		lastMatchPrice := fpdecimal.Zero
+		matchedOrderCount := int64(0) // Keep track of how many orders were matched
 
 		// Iterate through the prices
 		for _, orderPrice := range prices {
@@ -524,6 +533,7 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 					makerOrder.DecreaseQuantity(matchQty)
 					processedQty = processedQty.Add(matchQty)
 					lastMatchPrice = orderPrice
+					matchedOrderCount++ // Increment counter for each matched order
 
 					// Record the trades for both sides - use matchQty for both
 					done.appendOrder(limitOrder, matchQty, orderPrice)
@@ -545,6 +555,12 @@ func (ob *OrderBook) processLimitOrder(ctx context.Context, limitOrder *Order) (
 				// Price condition no longer met, stop matching
 				break
 			}
+		}
+
+		// Record metrics for matched orders if we had any matches
+		if matchedOrderCount > 0 {
+			metrics := otel.GetOrderBookMetrics()
+			metrics.RecordMatchedOrders(ctx, "limit", matchedOrderCount)
 		}
 
 		// Handle FOK orders specially - if we didn't fill the entire order, cancel the whole thing
