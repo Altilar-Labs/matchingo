@@ -27,6 +27,9 @@ type GRPCServerMetrics struct {
 
 	// Saturation metrics
 	goroutinesCount metric.Int64UpDownCounter
+
+	// Order metrics
+	orderCreationTotal metric.Int64Counter
 }
 
 // NewGRPCServerMetrics creates a new GRPCServerMetrics instance
@@ -76,12 +79,22 @@ func NewGRPCServerMetrics(meter metric.Meter) (*GRPCServerMetrics, error) {
 		return nil, err
 	}
 
+	orderCreationTotal, err := meter.Int64Counter(
+		"grpc.server.orders.creation.total",
+		metric.WithDescription("Total number of order creation requests"),
+		metric.WithUnit("{order}"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return &GRPCServerMetrics{
-		serverLatency:    serverLatency,
-		requestsTotal:    requestsTotal,
-		requestsInFlight: requestsInFlight,
-		errorTotal:       errorTotal,
-		goroutinesCount:  goroutinesCount,
+		serverLatency:      serverLatency,
+		requestsTotal:      requestsTotal,
+		requestsInFlight:   requestsInFlight,
+		errorTotal:         errorTotal,
+		goroutinesCount:    goroutinesCount,
+		orderCreationTotal: orderCreationTotal,
 	}, nil
 }
 
@@ -100,6 +113,11 @@ func (m *GRPCServerMetrics) IncRequests(ctx context.Context, method string) {
 		semconv.RPCMethodKey.String(method),
 	}
 	m.requestsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
+
+	// Track order creation metrics
+	if method == "CreateOrder" {
+		m.orderCreationTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
 }
 
 // AddInFlightRequests adds to the in-flight requests counter
@@ -119,4 +137,12 @@ func (m *GRPCServerMetrics) IncErrors(ctx context.Context, method string, status
 // SetGoroutines sets the number of goroutines
 func (m *GRPCServerMetrics) SetGoroutines(ctx context.Context, count int64) {
 	m.goroutinesCount.Add(ctx, count)
+}
+
+// IncOrderCreation increments the order creation counter
+func (m *GRPCServerMetrics) IncOrderCreation(ctx context.Context, status string) {
+	attrs := []attribute.KeyValue{
+		attribute.String("status", status),
+	}
+	m.orderCreationTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
