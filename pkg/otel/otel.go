@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -50,6 +51,8 @@ func Init(cfg Config) (func(), error) {
 	if cfg.ServiceVersion == "" {
 		cfg.ServiceVersion = "0.1.0"
 	}
+	// Allow override from environment variables
+	cfg.Endpoint = envOr("OTEL_EXPORTER_OTLP_ENDPOINT", cfg.Endpoint)
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "localhost:4317"
 	}
@@ -58,6 +61,11 @@ func Init(cfg Config) (func(), error) {
 	}
 	if cfg.ReconnectDelay == 0 {
 		cfg.ReconnectDelay = 10 * time.Second
+	}
+
+	// Start runtime and host metrics collection
+	if err := StartRuntimeMetrics(); err != nil {
+		log.Printf("Warning: Failed to start runtime metrics: %v", err)
 	}
 
 	var cleanup []func()
@@ -164,8 +172,11 @@ func initResource(serviceName, serviceVersion string) *sdkresource.Resource {
 func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.TracerProvider, error) {
 	ctx := context.Background()
 
-	// Create gRPC connection to collector
-	conn, err := grpc.DialContext(ctx, cfg.Endpoint,
+	// Allow configuration via environment variables
+	endpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", cfg.Endpoint)
+
+	// Create gRPC connection to collector with retry option
+	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithTimeout(cfg.ConnectTimeout),
 	)
@@ -173,9 +184,15 @@ func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.T
 		return nil, err
 	}
 
-	// Create exporter
+	// Create exporter with retry enabled
 	exporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithGRPCConn(conn),
+		otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{
+			Enabled:         true,
+			InitialInterval: 500 * time.Millisecond,
+			MaxInterval:     10 * time.Second,
+			MaxElapsedTime:  60 * time.Second,
+		}),
 	)
 	if err != nil {
 		return nil, err
@@ -186,7 +203,7 @@ func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.T
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource),
 		sdktrace.WithSampler(sdktrace.ParentBased(
-			sdktrace.TraceIDRatioBased(0.4), // Sample 10% of traces
+			sdktrace.TraceIDRatioBased(1), // Sample 100% of traces
 		)),
 	)
 
@@ -202,8 +219,11 @@ func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.T
 func initMeterProvider(cfg Config, resource *sdkresource.Resource) (*sdkmetric.MeterProvider, error) {
 	ctx := context.Background()
 
-	// Create gRPC connection to collector
-	conn, err := grpc.DialContext(ctx, cfg.Endpoint,
+	// Allow configuration via environment variables
+	endpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", cfg.Endpoint)
+
+	// Create gRPC connection to collector with retry
+	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithTimeout(cfg.ConnectTimeout),
 	)
@@ -211,9 +231,15 @@ func initMeterProvider(cfg Config, resource *sdkresource.Resource) (*sdkmetric.M
 		return nil, err
 	}
 
-	// Create exporter
+	// Create exporter with retry enabled
 	exporter, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithGRPCConn(conn),
+		otlpmetricgrpc.WithRetry(otlpmetricgrpc.RetryConfig{
+			Enabled:         true,
+			InitialInterval: 500 * time.Millisecond,
+			MaxInterval:     10 * time.Second,
+			MaxElapsedTime:  60 * time.Second,
+		}),
 	)
 	if err != nil {
 		return nil, err
@@ -229,6 +255,14 @@ func initMeterProvider(cfg Config, resource *sdkresource.Resource) (*sdkmetric.M
 	otel.SetMeterProvider(mp)
 
 	return mp, nil
+}
+
+// envOr returns the value of the environment variable if set, or the fallback value if not set
+func envOr(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }
 
 // GetOrderServiceTracer returns the tracer for the order service
