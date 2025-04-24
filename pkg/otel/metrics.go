@@ -2,6 +2,7 @@ package otel
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -11,6 +12,12 @@ import (
 
 const (
 	instrumentationName = "github.com/erain9/matchingo/pkg/otel"
+)
+
+var (
+	grpcMetrics     *GRPCServerMetrics
+	grpcMetricsOnce sync.Once
+	metricsLock     sync.RWMutex
 )
 
 // GRPCServerMetrics holds the metrics instruments for gRPC server monitoring
@@ -85,38 +92,70 @@ func NewGRPCServerMetrics(meter metric.Meter) (*GRPCServerMetrics, error) {
 	}, nil
 }
 
+// GetGRPCServerMetrics returns a singleton instance of GRPCServerMetrics
+func GetGRPCServerMetrics(meter metric.Meter) (*GRPCServerMetrics, error) {
+	var err error
+	grpcMetricsOnce.Do(func() {
+		grpcMetrics, err = NewGRPCServerMetrics(meter)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return grpcMetrics, nil
+}
+
 // RecordLatency records the latency of a gRPC request
-func (m *GRPCServerMetrics) RecordLatency(ctx context.Context, method string, duration time.Duration, statusCode string) {
+func (m *GRPCServerMetrics) RecordLatency(ctx context.Context, method string, duration time.Duration, statusCode string) error {
+	metricsLock.Lock()
+	defer metricsLock.Unlock()
+
 	attrs := []attribute.KeyValue{
 		semconv.RPCMethodKey.String(method),
 		semconv.RPCGRPCStatusCodeKey.String(statusCode),
 	}
 	m.serverLatency.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
+	return nil
 }
 
 // IncRequests increments the total requests counter
-func (m *GRPCServerMetrics) IncRequests(ctx context.Context, method string) {
+func (m *GRPCServerMetrics) IncRequests(ctx context.Context, method string) error {
+	metricsLock.Lock()
+	defer metricsLock.Unlock()
+
 	attrs := []attribute.KeyValue{
 		semconv.RPCMethodKey.String(method),
 	}
 	m.requestsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
+	return nil
 }
 
 // AddInFlightRequests adds to the in-flight requests counter
-func (m *GRPCServerMetrics) AddInFlightRequests(ctx context.Context, delta int64) {
+func (m *GRPCServerMetrics) AddInFlightRequests(ctx context.Context, delta int64) error {
+	metricsLock.Lock()
+	defer metricsLock.Unlock()
+
 	m.requestsInFlight.Add(ctx, delta)
+	return nil
 }
 
 // IncErrors increments the error counter
-func (m *GRPCServerMetrics) IncErrors(ctx context.Context, method string, statusCode string) {
+func (m *GRPCServerMetrics) IncErrors(ctx context.Context, method string, statusCode string) error {
+	metricsLock.Lock()
+	defer metricsLock.Unlock()
+
 	attrs := []attribute.KeyValue{
 		semconv.RPCMethodKey.String(method),
 		semconv.RPCGRPCStatusCodeKey.String(statusCode),
 	}
 	m.errorTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
+	return nil
 }
 
 // SetGoroutines sets the number of goroutines
-func (m *GRPCServerMetrics) SetGoroutines(ctx context.Context, count int64) {
+func (m *GRPCServerMetrics) SetGoroutines(ctx context.Context, count int64) error {
+	metricsLock.Lock()
+	defer metricsLock.Unlock()
+
 	m.goroutinesCount.Add(ctx, count)
+	return nil
 }

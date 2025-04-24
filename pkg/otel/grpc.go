@@ -14,7 +14,7 @@ import (
 // MetricsServerInterceptor creates a new unary server interceptor for OpenTelemetry metrics
 func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, error) {
 	meter := otel.GetMeterProvider().Meter(instrumentationName)
-	metrics, err := NewGRPCServerMetrics(meter)
+	metrics, err := GetGRPCServerMetrics(meter)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, error) {
 // MetricsStreamServerInterceptor creates a new stream server interceptor for OpenTelemetry metrics
 func MetricsStreamServerInterceptor() (grpc.StreamServerInterceptor, error) {
 	meter := otel.GetMeterProvider().Meter(instrumentationName)
-	metrics, err := NewGRPCServerMetrics(meter)
+	metrics, err := GetGRPCServerMetrics(meter)
 	if err != nil {
 		return nil, err
 	}
