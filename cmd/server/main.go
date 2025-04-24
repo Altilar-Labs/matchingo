@@ -128,17 +128,6 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
-	// Create metrics interceptors
-	metricsUnaryInterceptor, err := otel.MetricsServerInterceptor()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics interceptor: %w", err)
-	}
-
-	metricsStreamInterceptor, err := otel.MetricsStreamServerInterceptor()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics stream interceptor: %w", err)
-	}
-
 	// Configure OpenTelemetry options for gRPC stats handler
 	otelOpts := []otelgrpc.Option{
 		otelgrpc.WithTracerProvider(otel.GetTracerProvider(otel.ServiceOrder)),
@@ -152,8 +141,6 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 	// Create gRPC server with the order book service and stats handler
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelHandler),
-		grpc.ChainUnaryInterceptor(metricsUnaryInterceptor),
-		grpc.ChainStreamInterceptor(metricsStreamInterceptor),
 	)
 	orderBookService := server.NewGRPCOrderBookService(manager)
 	proto.RegisterOrderBookServiceServer(grpcServer, orderBookService)
