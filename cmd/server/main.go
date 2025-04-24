@@ -132,7 +132,6 @@ func setupGRPCServer(ctx context.Context, cfg *config.Config, manager *server.Or
 	otelOpts := []otelgrpc.Option{
 		otelgrpc.WithTracerProvider(otel.GetTracerProvider(otel.ServiceOrder)),
 		otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
-		otelgrpc.WithMeterProvider(otel.GetMeterProvider()),
 	}
 
 	// Create OpenTelemetry stats handler
