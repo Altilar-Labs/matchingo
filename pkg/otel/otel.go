@@ -62,7 +62,7 @@ func Init(cfg Config) (func(), error) {
 	if cfg.ReconnectDelay == 0 {
 		cfg.ReconnectDelay = 10 * time.Second
 	}
-	
+
 	// Start runtime and host metrics collection
 	if err := StartRuntimeMetrics(); err != nil {
 		log.Printf("Warning: Failed to start runtime metrics: %v", err)
@@ -203,7 +203,7 @@ func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.T
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource),
 		sdktrace.WithSampler(sdktrace.ParentBased(
-			sdktrace.TraceIDRatioBased(0.1), // Sample 10% of traces
+			sdktrace.TraceIDRatioBased(1), // Sample 100% of traces
 		)),
 	)
 
