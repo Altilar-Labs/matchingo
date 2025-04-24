@@ -221,7 +221,7 @@ func initMeterProvider(cfg Config, resource *sdkresource.Resource) (*sdkmetric.M
 
 	// Create meter provider
 	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(5*time.Second))),
 		sdkmetric.WithResource(resource),
 	)
 
