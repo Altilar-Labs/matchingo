@@ -23,48 +23,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      zookeeper:
-        image: bitnami/zookeeper:latest
-        ports:
-          - 2181:2181
-        env:
-          ALLOW_ANONYMOUS_LOGIN: "yes"
-        options: >-
-          --health-cmd="echo ruok | nc localhost 2181 | grep imok"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-      kafka:
-        image: bitnami/kafka:latest
-        ports:
-          - 9092:9092
-        env:
-          KAFKA_BROKER_ID: 1
-          KAFKA_CFG_PROCESS_ROLES: broker
-          KAFKA_CFG_NODE_ID: 1
-          KAFKA_CFG_LISTENERS: PLAINTEXT://:9092
-          KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-        options: >-
-          --health-cmd="kafka-topics.sh --bootstrap-server localhost:9092 --list"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
     steps:
     - uses: actions/checkout@v4
-
-    # Wait for Kafka to be healthy (optional, but recommended for reliability)
-    - name: Wait for Kafka
-      run: |
-        for i in {1..10}; do
-          nc -z localhost 9092 && echo "Kafka is up" && exit 0
-          echo "Waiting for Kafka..."
-          sleep 5
-        done
-        echo "Kafka did not start in time" && exit 1
 
     - name: Set up Go
       uses: actions/setup-go@v4
