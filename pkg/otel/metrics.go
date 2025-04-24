@@ -115,7 +115,7 @@ func (m *GRPCServerMetrics) IncRequests(ctx context.Context, method string) {
 	m.requestsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 	// Track order creation metrics
-	if method == "CreateOrder" {
+	if method == "/matchingo.api.OrderBookService/CreateOrder" {
 		m.orderCreationTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 }
