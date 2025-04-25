@@ -186,7 +186,7 @@ func initTracerProvider(cfg Config, resource *sdkresource.Resource) (*sdktrace.T
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource),
 		sdktrace.WithSampler(sdktrace.ParentBased(
-			sdktrace.TraceIDRatioBased(0.4), // Sample 10% of traces
+			sdktrace.TraceIDRatioBased(0.0001), // Sample 0.01% of traces
 		)),
 	)
 
